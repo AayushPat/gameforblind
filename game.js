@@ -100,7 +100,7 @@ function createBlock(startX, startY, w, h) {
   return { zones: zones, intensityRadius: 2.5 };
 }
 
-const HAZARDS = [
+let HAZARDS = [
   createWall(74, 8, 12),
   createBlock(2, 65, 3, 3),
   createBlock(14, 64, 4, 2),
@@ -121,13 +121,132 @@ const HAZARDS = [
   createBlock(11, 2, 9, 6)
 ];
 
-const PATROLLERS = [
+let PATROLLERS = [
   { x: 2, y: 65, minX: 1, maxX: 18, dir: 1 },
   { x: 18, y: 55, minX: 1, maxX: 18, dir: -1 },
   { x: 5, y: 45, minX: 1, maxX: 18, dir: 1 },
   { x: 15, y: 30, minX: 1, maxX: 18, dir: -1 },
   { x: 8, y: 17, minX: 1, maxX: 18, dir: 1 }
 ];
+
+// ─── TUTORIAL ────────────────────────────────────────────────────────────────
+const MAIN_HAZARDS    = HAZARDS;
+const MAIN_PATROLLERS = PATROLLERS;
+
+// Single hazard wall with a gap — the only obstacle in the tutorial
+const TUTORIAL_HAZARDS = [createWall(74, 8, 12)];
+
+let isTutorial    = false;
+let tutorialStep  = 0;
+let tutorialMoves = 0;
+
+const TUTORIAL_LINES = [
+  // 0 — on start
+  "Welcome to Wake Up. You navigate this world using sound alone. " +
+  "The ambient music pans left and right to guide you toward safety. " +
+  "Use the arrow keys or W A S D to move. Explore the space.",
+
+  // 1 — after first move
+  "There is a danger zone ahead. As you get closer you will hear " +
+  "a warning tone rise and pan toward the threat. The guide music " +
+  "will shift left or right to point you toward the safe gap. " +
+  "Walk toward the danger and listen.",
+
+  // 2 — player is close to the wall
+  "Danger is close. Follow the guide music — it is panning toward " +
+  "the gap in the wall. Move through the opening.",
+
+  // 3 — player crossed the wall
+  "You made it through. Keep following the guide music. " +
+  "The checkpoint is just ahead.",
+
+  // 4 — tutorial checkpoint reached
+  "Tutorial complete. Trust the music. The real mission begins now."
+];
+
+// Updates the on-screen narration box AND speaks via TTS if available.
+function tutorialNarrate(text, onDone = null) {
+  const el = document.getElementById("narration-game");
+  if (el) el.textContent = text;
+  speak(text, { lock: true, canCut: false, onDone });
+}
+
+// ─── ElevenLabs TTS ──────────────────────────────────────────────────────────
+let _ttsAudio      = null;
+let _ttsSpeaking   = false;
+let _narrationLock = false;  // blocks player movement while tutorial is talking
+
+// Cache blob URLs for known tutorial lines — pre-fetched at page load so
+// playback is instant when the user presses start.
+const _audioCache = new Map();
+
+async function _fetchAudio(text) {
+  const res = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${EL_VOICE_ID}/stream`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": EL_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg"
+      },
+      body: JSON.stringify({
+        text,
+        model_id: "eleven_turbo_v2_5",
+        voice_settings: { stability: 0.50, similarity_boost: 0.75 }
+      })
+    }
+  );
+  if (!res.ok) throw new Error("TTS fetch failed");
+  return URL.createObjectURL(await res.blob());
+}
+
+// Pre-warm all tutorial lines in parallel while user reads the intro screen.
+// By the time they click start the blobs are ready → zero perceptible delay.
+(async () => {
+  await Promise.all(TUTORIAL_LINES.map(async text => {
+    try { _audioCache.set(text, await _fetchAudio(text)); } catch (_) {}
+  }));
+})();
+
+// options:
+//   lock   — freeze player movement while this line plays
+//   canCut — if false, bail out when already speaking (never cuts a live line)
+//   onDone — callback fired when audio finishes (or on error)
+async function speak(text, { lock = false, canCut = true, onDone = null } = {}) {
+  // Tutorial lines must not cut each other — skip if already speaking
+  if (!canCut && _ttsSpeaking) return;
+
+  // Interrupt whatever is currently playing
+  if (_ttsAudio) {
+    _ttsAudio.pause();
+    _ttsAudio.src = "";
+    _ttsAudio = null;
+  }
+
+  _ttsSpeaking = true;
+  if (lock) _narrationLock = true;
+
+  const finish = () => {
+    _ttsSpeaking   = false;
+    _narrationLock = false;
+    if (onDone) onDone();
+  };
+
+  try {
+    // Use cached blob URL if available (tutorial lines), otherwise fetch live
+    const url = _audioCache.has(text) ? _audioCache.get(text) : await _fetchAudio(text);
+    _ttsAudio = new Audio(url);
+    _ttsAudio.play().catch(() => {});
+    _ttsAudio.onended = () => {
+      // Only revoke if it was a live fetch (not a cached tutorial line)
+      if (!_audioCache.has(text)) URL.revokeObjectURL(url);
+      finish();
+    };
+  } catch (_) {
+    finish();
+  }
+}
 
 // ─── AUDIO SYSTEM ────────────────────────────────────────────────────────────
 let audioCtx;
@@ -329,6 +448,7 @@ const game = {
 
   move(dx, dy) {
     if (!this.started || this.won) return;
+    if (_narrationLock) return;  // block input while narrator is speaking
 
     const nx = this.player.x + dx;
     const ny = this.player.y + dy;
@@ -425,6 +545,29 @@ const game = {
     }
     if (typeof updatePathGuide === "function") updatePathGuide(1, pathGuidePan);
 
+    // ── Tutorial narration advancement ────────────────────────────────────────
+    // Steps: 0=welcome(locked) 1=free 2=danger-ahead(locked) 3=free
+    //        4=danger-close(locked) 5=free 6=made-it-thru(locked) 7=free→goal
+    if (isTutorial) {
+      tutorialMoves++;
+
+      // Step 1 → 2: player has explored a bit and is approaching the wall
+      if (tutorialStep === 1 && nearest.dist < 6 && tutorialMoves > 4) {
+        tutorialStep = 2;
+        tutorialNarrate(TUTORIAL_LINES[1], () => { tutorialStep = 3; });
+
+      // Step 3 → 4: player is right on the edge of the danger zone
+      } else if (tutorialStep === 3 && nearest.dist < 3) {
+        tutorialStep = 4;
+        tutorialNarrate(TUTORIAL_LINES[2], () => { tutorialStep = 5; });
+
+      // Step 5 → 6: player has passed through the gap
+      } else if (tutorialStep === 5 && this.player.y <= 73) {
+        tutorialStep = 6;
+        tutorialNarrate(TUTORIAL_LINES[3], () => { tutorialStep = 7; });
+      }
+    }
+
     if (this.player.x === this.goal.x && this.player.y === this.goal.y) {
       if (typeof updatePathGuide === "function") updatePathGuide(0);
       playTone({ freq: 600, type: "sine", duration: 0.4, volume: 0.1, pan: 0 });
@@ -442,6 +585,33 @@ const game = {
   },
 
   advanceCheckpoint() {
+    // ── Tutorial completion: restore real world then fall through ─────────────
+    if (isTutorial) {
+      isTutorial = false;
+      HAZARDS    = MAIN_HAZARDS;
+      PATROLLERS = MAIN_PATROLLERS;
+      tutorialStep = 5;
+
+      if (typeof playCheckpoint === "function") playCheckpoint();
+      tutorialNarrate(TUTORIAL_LINES[4]);
+
+      // Set up chapter 2 manually (player is already at STORY_NODES[1] position)
+      currentNodeIndex = 1;
+      visualPulse = 2.0;
+      this.goal.x = STORY_NODES[2].x;
+      this.goal.y = STORY_NODES[2].y;
+      currentPath = computePath(this.player.x, this.player.y, this.goal.x, this.goal.y);
+
+      // Delay chapter 2 narration so "tutorial complete" speaks first
+      setTimeout(() => {
+        const el = document.getElementById("narration-game");
+        if (el) el.textContent = STORY_NODES[1].text;
+        if (typeof speak === "function") speak(STORY_NODES[1].text);
+      }, 5000);
+
+      return;
+    }
+
     currentNodeIndex++;
     visualPulse = 2.0;
 
@@ -716,9 +886,8 @@ function renderGrid() {
     c.font = "bold 14px monospace";
     c.fillText(`PLAYER HP: ${game.hp}%`, 30, 38);
 
-    c.font = "bold 12px monospace";
-    c.fillText(`PINGS: ${game.pings}/${game.maxPings}`, 30, 58);
-  }
+  c.font = "bold 12px monospace";
+  c.fillText(`PINGS: ${game.pings}/${game.maxPings}`, 30, 58);
 }
 
 // ─── START & INPUTS ──────────────────────────────────────────────────────────
@@ -735,9 +904,18 @@ document.getElementById("start-btn").addEventListener("click", () => {
   gameUI.removeAttribute("aria-hidden");
   game.started = true;
 
+  // ── Tutorial: swap to a single-wall world, no patrollers ──────────────────
+  isTutorial    = true;
+  tutorialStep  = 0;
+  tutorialMoves = 0;
+  HAZARDS    = TUTORIAL_HAZARDS;
+  PATROLLERS = [];
+
   currentNodeIndex = 0;
-  game.player.x = STORY_NODES[0].x;
-  game.player.y = STORY_NODES[0].y;
+  // Start player left-of-center so directional panning is noticeable
+  game.player.x = 3;
+  game.player.y = STORY_NODES[0].y;   // y = 78
+  // Tutorial goal = first real checkpoint (wall gap leads right to it)
   game.goal.x = STORY_NODES[1].x;
   game.goal.y = STORY_NODES[1].y;
   game.won = false;
@@ -749,7 +927,12 @@ document.getElementById("start-btn").addEventListener("click", () => {
   beaconTimer = 0;
   lastMoveAt = 0;
 
-  if (typeof speak === "function") speak(STORY_NODES[0].text);
+  // Welcome locked — step advances to 1 only after audio fully finishes
+  tutorialNarrate(TUTORIAL_LINES[0], () => {
+    tutorialStep = 1;
+    const el = document.getElementById("narration-game");
+    if (el) el.textContent = "Explore. Move with arrow keys or W A S D.";
+  });
 
   currentPath = computePath(game.player.x, game.player.y, game.goal.x, game.goal.y);
   if (!frameId) drawLoop();
