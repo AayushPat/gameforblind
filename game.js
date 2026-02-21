@@ -496,9 +496,19 @@ const game = {
       if (this.hp <= 0) {
         killPlayer("Vital signs lost. Restarting chapter.");
       } else {
-        if (typeof speak === "function") speak(`Hazard hit. Falling back. HP at ${this.hp}.`);
         this.player.x = STORY_NODES[currentNodeIndex].x;
         this.player.y = STORY_NODES[currentNodeIndex].y;
+        if (isTutorial) {
+          // Explain what happened and reset step so approach sequence replays.
+          // tutorialMoves=0 means the 4-move guard gives them time to re-orient
+          // before the "danger zone ahead" narration fires again.
+          tutorialNarrate(TUTORIAL_LINES[5], () => {
+            tutorialStep  = 1;
+            tutorialMoves = 0;
+          });
+        } else {
+          if (typeof speak === "function") speak(`Hazard hit. Falling back. HP at ${this.hp}.`);
+        }
       }
       return;
     }
