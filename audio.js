@@ -1,168 +1,108 @@
-// ─── AUDIO ENGINE (FMOD) ──────────────────────────────────────────────────────
-// Requires fmodstudio.js + fmodstudio.wasm from fmod.com (HTML5 export)
-// Banks expected in ./banks/ : Master.bank, Master.strings.bank, SFX.bank, Music.bank
+// ─── AUDIO ENGINE ─────────────────────────────────────────────────────────────
+// Uses Web Audio API AudioBufferSourceNode for seamless gapless looping.
+// audioCtx is created by game.js's initAudio() before initAmbienceLoops() runs.
 
-let gStudio = null;       // FMOD Studio system
-let gCoreSystem = null;   // FMOD Core system (for update loop)
+let _exploring       = null;
+let _exploringPanner = null;
+let _danger          = null;
+let _dangerPanner    = null;
+let _audioReady      = false;
 
-// Persistent event instances (looping sounds)
-let instHeartbeat = null;
-let instBeacon    = null;
-let instMusic     = null;
-let instDangerSnap = null; // snapshot
+let _dangerLevel    = 0;
+let _pathGuideLevel = 0;
 
-let fmodReady = false;
-let updateHandle = null;
+// ─── INIT ──────────────────────────────────────────────────────────────────────
+async function initAmbienceLoops() {
+  _dangerPanner = audioCtx.createStereoPanner();
+  _dangerPanner.pan.value = 0;
+  _dangerPanner.connect(audioCtx.destination);
 
-// ─── INIT ─────────────────────────────────────────────────────────────────────
-async function initAudio() {
-  // FMOD's HTML5 module is loaded by fmodstudio.js and exposed as FMOD global
-  const FMODModule = {};
+  _exploringPanner = audioCtx.createStereoPanner();
+  _exploringPanner.pan.value = 0;
+  _exploringPanner.connect(audioCtx.destination);
 
-  await new Promise((resolve) => {
-    FMODModule['onRuntimeInitialized'] = resolve;
-    FMOD(FMODModule);
-  });
-
-  let out = {};
-
-  FMODModule.Studio.System.create(out);
-  gStudio = out.val;
-
-  gStudio.getCoreSystem(out);
-  gCoreSystem = out.val;
-
-  gStudio.initialize(
-    64,                             // max channels
-    FMODModule.STUDIO_INITFLAGS.NORMAL,
-    FMODModule.INITFLAGS.NORMAL,
-    null
-  );
-
-  // Load banks (place .bank files in a ./banks/ folder next to gfb.html)
-  const banks = ['Master.bank', 'Master.strings.bank', 'SFX.bank', 'Music.bank'];
-  for (const name of banks) {
-    gStudio.loadBankFile(`banks/${name}`, FMODModule.STUDIO_LOAD_BANK_FLAGS.NORMAL, out);
-  }
-
-  fmodReady = true;
-
-  // FMOD requires a periodic update call
-  updateHandle = setInterval(() => gStudio.update(), 16);
-
-  _startMusic();
-  _startHeartbeat();
+  [_exploring, _danger] = await Promise.all([
+    _makeLoop('sounds/exploring.mp3', 0.0, _exploringPanner),
+    _makeLoop('sounds/danger.mp3',    0.0, _dangerPanner),
+  ]);
+  _audioReady = true;
 }
 
-// ─── HELPER: create and start an event instance ───────────────────────────────
-function _createInstance(path) {
-  if (!fmodReady) return null;
-  const out = {};
-  const result = gStudio.getEvent(path, out);
-  if (result !== 0 /* FMOD_OK */) { console.warn('FMOD event not found:', path); return null; }
-  out.val.createInstance(out);
-  return out.val;
+// Fetch, decode, and start a gapless looping buffer. Returns a volume proxy
+// with fadeTo(target, seconds) for smooth ramps.
+async function _makeLoop(src, initialVolume, outputNode) {
+  const response    = await fetch(src);
+  const arrayBuffer = await response.arrayBuffer();
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+  const gainNode = audioCtx.createGain();
+  gainNode.gain.value = initialVolume;
+  gainNode.connect(outputNode);
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.loop   = true;
+  source.connect(gainNode);
+  source.start(0);
+
+  return {
+    get volume()  { return gainNode.gain.value; },
+    set volume(v) {
+      gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+      gainNode.gain.value = Math.max(0, Math.min(4, v));
+    },
+    fadeTo(v, secs) {
+      const clamped = Math.max(0, Math.min(4, v));
+      gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+      gainNode.gain.setValueAtTime(gainNode.gain.value, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(clamped, audioCtx.currentTime + secs);
+    }
+  };
 }
 
-function _playOneShot(path, params = {}) {
-  const inst = _createInstance(path);
-  if (!inst) return;
-  for (const [k, v] of Object.entries(params)) inst.setParameterByName(k, v, false);
-  inst.start();
-  inst.release(); // auto-clean when done
-}
-
-// ─── MUSIC ────────────────────────────────────────────────────────────────────
-function _startMusic() {
-  instMusic = _createInstance('event:/Music/Adaptive');
-  if (!instMusic) return;
-  instMusic.setParameterByName('Danger', 0, false);
-  instMusic.start();
-}
-
-// Called by game.js updateSounds() — danger and df are 0–1
-function setMusicVolume(danger, df) {
-  if (!instMusic) return;
-  instMusic.setParameterByName('Danger', danger, false);
-  // Optional: drive a Distance/Goal parameter if you add one in FMOD Studio
-  // instMusic.setParameterByName('Distance', df, false);
-}
-
-// ─── HEARTBEAT ────────────────────────────────────────────────────────────────
-function _startHeartbeat() {
-  instHeartbeat = _createInstance('event:/SFX/Heartbeat');
-  if (!instHeartbeat) return;
-  instHeartbeat.setParameterByName('BPM', 60, false);
-  instHeartbeat.start();
-}
-
-function setHeartbeatBPM(bpm) {
-  if (!instHeartbeat) return;
-  instHeartbeat.setParameterByName('BPM', Math.max(40, Math.min(180, bpm)), false);
-}
-
-// ─── BEACON ───────────────────────────────────────────────────────────────────
-function startBeacon(pan, distanceFactor) {
-  if (instBeacon) { instBeacon.stop(0); instBeacon.release(); }
-  instBeacon = _createInstance('event:/SFX/Beacon');
-  if (!instBeacon) return;
-  instBeacon.setParameterByName('Pan', pan, false);
-  instBeacon.setParameterByName('Distance', distanceFactor, false);
-  instBeacon.start();
-}
-
-function stopBeacon() {
-  if (!instBeacon) return;
-  instBeacon.stop(0 /* FMOD_STUDIO_STOP_ALLOWFADEOUT */);
-  instBeacon.release();
-  instBeacon = null;
-}
-
-// Update beacon parameters each move (called by game logic)
-function updateBeacon(pan, distanceFactor) {
-  if (!instBeacon) return;
-  instBeacon.setParameterByName('Pan', pan, false);
-  instBeacon.setParameterByName('Distance', distanceFactor, false);
-}
-
-// ─── DANGER SNAPSHOT ─────────────────────────────────────────────────────────
-// Snapshots apply mix effects (e.g. low-pass, reverb) globally via FMOD Studio
-function triggerDangerSnapshot(intensity) {
-  if (!fmodReady) return;
-  if (intensity > 0.4 && !instDangerSnap) {
-    instDangerSnap = _createInstance('snapshot:/DangerZone');
-    if (instDangerSnap) instDangerSnap.start();
-  } else if (intensity <= 0.4 && instDangerSnap) {
-    instDangerSnap.stop(0);
-    instDangerSnap.release();
-    instDangerSnap = null;
+// ─── PATH / GAP GUIDE ─────────────────────────────────────────────────────────
+// level: 0–1, pan: -1 left … 1 right (toward gap or checkpoint)
+function updatePathGuide(level, pan = 0) {
+  if (!_audioReady || !_exploring) return;
+  _pathGuideLevel = level;
+  // Fixed quiet baseline — volume stays constant, only pan shifts direction
+  const target = level > 0 ? 0.45 * Math.max(0, 1 - _dangerLevel * 0.6) : 0;
+  _exploring.fadeTo(target, 0.8);
+  if (_exploringPanner) {
+    _exploringPanner.pan.cancelScheduledValues(audioCtx.currentTime);
+    _exploringPanner.pan.setTargetAtTime(
+      Math.max(-1, Math.min(1, pan)),
+      audioCtx.currentTime,
+      0.15
+    );
   }
 }
 
-// ─── ONE-SHOT SFX ─────────────────────────────────────────────────────────────
-function playNoise({ pan = 0 } = {}) {
-  _playOneShot('event:/SFX/Footstep', { Pan: pan });
+// ─── DANGER CROSSFADE ─────────────────────────────────────────────────────────
+// level: 0 = safe, 1 = max danger  |  pan: -1 left … 1 right
+function updateDangerMusic(level, pan = 0) {
+  if (!_audioReady) return;
+  _dangerLevel = level;
+  _danger.volume = level;
+  // Re-sync path guide whenever danger changes
+  if (_exploring) {
+    const target = _pathGuideLevel * 2.0 * Math.max(0, 1 - _dangerLevel);
+    _exploring.fadeTo(target, 0.4);
+  }
+  if (_dangerPanner) {
+    _dangerPanner.pan.cancelScheduledValues(audioCtx.currentTime);
+    _dangerPanner.pan.setTargetAtTime(
+      Math.max(-1, Math.min(1, pan)),
+      audioCtx.currentTime,
+      0.15
+    );
+  }
 }
 
-function playBlip() {
-  _playOneShot('event:/SFX/Blip');
+// ─── CHECKPOINT STINGER ────────────────────────────────────────────────────────
+function playCheckpoint() {
+  const stinger = new Audio('sounds/cutaproachmusic.mp3');
+  stinger.play().catch(() => {});
 }
 
-function playDanger(intensity) {
-  if (intensity <= 0) return;
-  _playOneShot('event:/SFX/Danger', { Intensity: intensity });
-}
-
-function playWin() {
-  stopBeacon();
-  // Heartbeat will auto-stop if you set it to 0 or stop the instance
-  if (instHeartbeat) { instHeartbeat.stop(0); instHeartbeat.release(); instHeartbeat = null; }
-  _playOneShot('event:/SFX/Win');
-}
-
-// Wall bump — reuse Blip or give it its own event
-function playTone({ freq } = {}) {
-  // Thin compatibility shim: game.js calls playTone for wall bumps
-  // Route to a generic UI event; FMOD Studio controls the actual sound
-  _playOneShot('event:/SFX/Wall');
-}
+function playWin() { playCheckpoint(); }
