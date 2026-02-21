@@ -413,19 +413,17 @@ const game = {
       });
     }
 
-    // Music path guide: directional ambience panned toward gap / checkpoint
+    // Music path guide: fixed-volume ambience panned toward ideal next move
     currentPath = computePath(this.player.x, this.player.y, this.goal.x, this.goal.y);
-    const gapInfo = nearestGapInfo(this.player.x, this.player.y, this.goal.y);
-    let pathGuideLevel, pathGuidePan;
-    if (!gapInfo) {
-      const df = this.distanceFactor();
-      pathGuideLevel = Math.pow(Math.max(0, Math.min(1, (0.45 - df) / 0.4)), 2);
-      pathGuidePan   = Math.max(-1, Math.min(1, (this.goal.x - this.player.x) / 3));
-    } else {
-      pathGuideLevel = Math.max(0, Math.min(1, (8 - gapInfo.dist) / 7));
-      pathGuidePan   = Math.max(-1, Math.min(1, (gapInfo.gapX - this.player.x) / 3));
+    let pathGuidePan = 0;
+    if (currentPath.length > 0) {
+      const lookAhead = Math.min(5, currentPath.length);
+      let xSum = 0;
+      for (let i = 0; i < lookAhead; i++) xSum += currentPath[i].x;
+      const avgX = xSum / lookAhead;
+      pathGuidePan = clamp((avgX - this.player.x) / 2.5, -1, 1);
     }
-    if (typeof updatePathGuide === "function") updatePathGuide(pathGuideLevel, pathGuidePan);
+    if (typeof updatePathGuide === "function") updatePathGuide(1, pathGuidePan);
 
     if (this.player.x === this.goal.x && this.player.y === this.goal.y) {
       if (typeof updatePathGuide === "function") updatePathGuide(0);

@@ -65,14 +65,15 @@ async function _makeLoop(src, initialVolume, outputNode) {
 function updatePathGuide(level, pan = 0) {
   if (!_audioReady || !_exploring) return;
   _pathGuideLevel = level;
-  const target = level * 2.0 * Math.max(0, 1 - _dangerLevel);
-  _exploring.fadeTo(target, 0.3);
+  // Fixed quiet baseline — volume stays constant, only pan shifts direction
+  const target = level > 0 ? 0.45 * Math.max(0, 1 - _dangerLevel * 0.6) : 0;
+  _exploring.fadeTo(target, 0.8);
   if (_exploringPanner) {
     _exploringPanner.pan.cancelScheduledValues(audioCtx.currentTime);
     _exploringPanner.pan.setTargetAtTime(
       Math.max(-1, Math.min(1, pan)),
       audioCtx.currentTime,
-      0.1
+      0.15
     );
   }
 }
