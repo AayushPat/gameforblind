@@ -576,7 +576,10 @@ const game = {
       this.hp = Math.min(this.maxHp, this.hp + 30);
       this.pings = Math.min(this.maxPings, this.pings + 1);
 
-      spawnGlobalRipple("rgba(255, 215, 0, ALPHA)", 15, 6);
+      // Minor ripple on normal checkpoint
+      if (currentNodeIndex < STORY_NODES.length - 1) {
+        spawnGlobalRipple("rgba(255, 215, 0, ALPHA)", 15, 6);
+      }
       this.advanceCheckpoint();
     }
   },
@@ -614,8 +617,18 @@ const game = {
 
     if (currentNodeIndex >= STORY_NODES.length) {
       this.won = true;
-      if (typeof speak === "function") speak(STORY_NODES[STORY_NODES.length - 1].text);
+
+      // ─── VICTORY EFFECTS ───
+      if (typeof speak === "function") speak("Signal located. The Broadcast Tower is secure.");
       if (this.patrolInterval) clearInterval(this.patrolInterval);
+
+      // Triumphant Victory Chords
+      playTone({ freq: 440, type: "sine", duration: 0.3, volume: 0.1 }); // A4
+      setTimeout(() => playTone({ freq: 554, type: "sine", duration: 0.3, volume: 0.1 }), 300); // C#5
+      setTimeout(() => playTone({ freq: 659, type: "sine", duration: 1.0, volume: 0.1 }), 600); // E5
+
+      // Massive slow cyan victory ripple
+      spawnGlobalRipple("rgba(0, 255, 204, ALPHA)", 8, 25);
       return;
     }
 
@@ -777,6 +790,7 @@ function renderGrid() {
     c.shadowBlur = 0;
 
     c.fillStyle = "rgba(255, 255, 255, 0.9)";
+    c.textAlign = "left";
     c.font = "bold 12px monospace";
     c.fillText(`CH ${i + 1}`, node.x * CELL + CELL, node.y * CELL + CELL / 2 + 5);
   });
@@ -833,44 +847,53 @@ function renderGrid() {
   c.restore();
 
   // ─── UI HUD OVERLAY ───
-  c.fillStyle = "rgba(0, 0, 0, 0.7)";
-  c.fillRect(20, 20, 220, 55);
-  c.strokeStyle = "#ff0044";
-  c.lineWidth = 2;
-  c.strokeRect(20, 20, 220, 55);
+  if (game.won) {
+    // ─── GAME OVER / VICTORY OVERLAY ───
+    c.fillStyle = "rgba(0, 0, 0, 0.85)";
+    c.fillRect(0, 0, viewW, viewH);
 
-  const hpWidth = Math.max(0, (game.hp / game.maxHp) * 216);
-  if (game.hp > 50) c.fillStyle = "#00ffcc";
-  else if (game.hp > 25) c.fillStyle = "#ffd700";
-  else c.fillStyle = "#ff0044";
+    c.fillStyle = "#00ffcc";
+    c.textAlign = "center";
+    c.font = "bold 42px monospace";
+    c.fillText("SIGNAL LOCATED", viewW / 2, viewH / 2 - 30);
 
-  c.fillRect(22, 22, hpWidth, 21);
+    c.fillStyle = "#ffffff";
+    c.font = "20px monospace";
+    c.fillText("THE BROADCAST TOWER IS SECURE.", viewW / 2, viewH / 2 + 10);
 
-  c.fillStyle = "#ffffff";
-  c.font = "bold 14px monospace";
-  c.fillText(`PLAYER HP: ${game.hp}%`, 30, 38);
+    c.fillStyle = "#ffd700";
+    c.font = "14px monospace";
+    c.fillText("Refresh the page to play again.", viewW / 2, viewH / 2 + 70);
+
+    c.textAlign = "left"; // Reset for safety
+  } else {
+    // ─── NORMAL HUD ───
+    c.fillStyle = "rgba(0, 0, 0, 0.7)";
+    c.fillRect(20, 20, 220, 55);
+    c.strokeStyle = "#ff0044";
+    c.lineWidth = 2;
+    c.strokeRect(20, 20, 220, 55);
+
+    const hpWidth = Math.max(0, (game.hp / game.maxHp) * 216);
+    if (game.hp > 50) c.fillStyle = "#00ffcc";
+    else if (game.hp > 25) c.fillStyle = "#ffd700";
+    else c.fillStyle = "#ff0044";
+
+    c.fillRect(22, 22, hpWidth, 21);
+
+    c.fillStyle = "#ffffff";
+    c.textAlign = "left";
+    c.font = "bold 14px monospace";
+    c.fillText(`PLAYER HP: ${game.hp}%`, 30, 38);
 
   c.font = "bold 12px monospace";
   c.fillText(`PINGS: ${game.pings}/${game.maxPings}`, 30, 58);
-
-  // Tutorial badge
-  if (isTutorial) {
-    c.fillStyle = "rgba(0, 0, 0, 0.7)";
-    c.fillRect(20, 82, 130, 24);
-    c.strokeStyle = "#00ffcc";
-    c.lineWidth = 1;
-    c.strokeRect(20, 82, 130, 24);
-    c.fillStyle = "#00ffcc";
-    c.font = "bold 11px monospace";
-    c.fillText("[ TUTORIAL MODE ]", 26, 98);
-  }
 }
 
 // ─── START & INPUTS ──────────────────────────────────────────────────────────
 document.getElementById("start-btn").addEventListener("click", () => {
   if (typeof initAudio === "function") initAudio();
 
-  // FIX: This CSS injected here will securely hide the bottom text ONLY after you press start!
   const style = document.createElement('style');
   style.innerHTML = `body { color: transparent !important; } #game-ui, #grid-canvas, #game-ui * { color: white !important; }`;
   document.head.appendChild(style);
