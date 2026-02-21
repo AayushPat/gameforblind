@@ -1,5 +1,68 @@
+// ─── AMBIENT INTERACTIVE BACKGROUND ──────────────────────────────────────────
+const bgCanvas = document.createElement("canvas");
+bgCanvas.id = "ambient-bg";
+Object.assign(bgCanvas.style, {
+  position: "fixed", top: "0", left: "0",
+  width: "100vw", height: "100vh",
+  zIndex: "-1", pointerEvents: "none"
+});
+document.body.appendChild(bgCanvas);
+document.body.style.backgroundColor = "#07040f"; // Deep tech void
+document.body.style.margin = "0";
+document.body.style.overflow = "hidden";
+
+let mouseX = window.innerWidth / 2;
+let mouseY = window.innerHeight / 2;
+document.addEventListener("mousemove", (e) => { mouseX = e.clientX; mouseY = e.clientY; });
+
+let globalRipples = [];
+function spawnGlobalRipple(colorStr, speed, width) {
+  globalRipples.push({ radius: 0, color: colorStr, speed: speed, width: width });
+}
+
+function drawAmbientBackground() {
+  const ctx = bgCanvas.getContext("2d");
+  const w = bgCanvas.width = window.innerWidth;
+  const h = bgCanvas.height = window.innerHeight;
+
+  ctx.fillStyle = "#07040f";
+  ctx.fillRect(0, 0, w, h);
+
+  const gradient = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 500);
+  gradient.addColorStop(0, "rgba(0, 255, 204, 0.05)");
+  gradient.addColorStop(1, "transparent");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.02)";
+  ctx.lineWidth = 1;
+  const gridSize = 100;
+  const timeOffset = (Date.now() / 40) % gridSize;
+
+  for (let x = -timeOffset; x < w; x += gridSize) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  }
+  for (let y = -timeOffset; y < h; y += gridSize) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+
+  for (let i = globalRipples.length - 1; i >= 0; i--) {
+    let rip = globalRipples[i];
+    rip.radius += rip.speed;
+    let alpha = Math.max(0, 1 - (rip.radius / (w * 0.8)));
+
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, rip.radius, 0, Math.PI * 2);
+    ctx.strokeStyle = rip.color.replace("ALPHA", alpha);
+    ctx.lineWidth = rip.width;
+    ctx.stroke();
+
+    if (rip.radius > w) globalRipples.splice(i, 1);
+  }
+}
+
 // ─── CONTINUOUS MAP CONFIGURATION ────────────────────────────────────────────
-const MAP = { w: 20, h: 80 }; // EXPANDED GRID HEIGHT
+const MAP = { w: 20, h: 80 };
 const CELL = 40;
 
 const STORY_NODES = [
@@ -37,52 +100,33 @@ function createBlock(startX, startY, w, h) {
   return { zones: zones, intensityRadius: 2.5 };
 }
 
-// REMAPPED HAZARDS FOR TALLER GRID
 const HAZARDS = [
   createWall(74, 8, 12),
-
-  // The Minefield
   createBlock(2, 65, 3, 3),
   createBlock(14, 64, 4, 2),
   createBlock(8, 66, 2, 2),
   createBlock(10, 62, 2, 2),
-
-  // The Gauntlet
   createBlock(0, 56, 6, 4),
   createBlock(14, 56, 6, 4),
-
-  // Zig-Zag Walls
   createWall(48, 1, 6),
   createWall(45, 13, 18),
-
-  // The Blockade
   createBlock(4, 38, 12, 4),
-
-  // The Broken Bridge
   createBlock(0, 28, 5, 2),
   createBlock(8, 28, 4, 2),
   createBlock(15, 28, 5, 2),
-
-  // The Vents (Tricky maze before the roof)
   createBlock(2, 18, 6, 2),
   createBlock(12, 18, 6, 2),
   createBlock(6, 20, 8, 2),
-
-  // --- THE CLIMAX: The Narrow Ledge (Chapter 9 to 10) ---
-  // Blocks the entire left and right side of the roof.
-  // You can ONLY walk on x=9 and x=10.
-  createBlock(0, 2, 9, 6),  // Left drop-off
-  createBlock(11, 2, 9, 6)  // Right drop-off
+  createBlock(0, 2, 9, 6),
+  createBlock(11, 2, 9, 6)
 ];
 
-// Added more patrollers for the longer map
 const PATROLLERS = [
   { x: 2, y: 65, minX: 1, maxX: 18, dir: 1 },
   { x: 18, y: 55, minX: 1, maxX: 18, dir: -1 },
   { x: 5, y: 45, minX: 1, maxX: 18, dir: 1 },
   { x: 15, y: 30, minX: 1, maxX: 18, dir: -1 },
   { x: 8, y: 17, minX: 1, maxX: 18, dir: 1 }
-  // Notice: No patrollers spawn above y=15 (The Safe Zone)
 ];
 
 // ─── AUDIO SYSTEM ────────────────────────────────────────────────────────────
@@ -124,7 +168,6 @@ function playTone({ freq, type, duration, volume, pan = 0 }) {
   osc.stop(audioCtx.currentTime + duration);
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function normPan(dx) { return clamp(dx / 6, -1, 1); }
 
@@ -164,6 +207,8 @@ let beaconTimer = 0;
 function killPlayer(msg) {
   playTone({ freq: 50, type: "sawtooth", duration: 1.0, volume: 0.3, pan: 0 });
   screenShake = 20;
+
+  spawnGlobalRipple("rgba(255, 0, 68, ALPHA)", 30, 15);
 
   if (typeof speak === "function") speak(msg);
 
@@ -236,6 +281,7 @@ const game = {
       this.hp -= 10;
       playTone({ freq: 120, type: "sawtooth", duration: 0.3, volume: 0.2, pan: 0 });
       screenShake = 15;
+      spawnGlobalRipple("rgba(255, 0, 68, ALPHA)", 20, 8);
 
       if (this.hp <= 0) {
         killPlayer("Vital signs lost. Restarting chapter.");
@@ -284,6 +330,8 @@ const game = {
 
       this.hp = Math.min(this.maxHp, this.hp + 30);
       this.pings = Math.min(this.maxPings, this.pings + 1);
+
+      spawnGlobalRipple("rgba(255, 215, 0, ALPHA)", 15, 6);
       this.advanceCheckpoint();
     }
   },
@@ -295,14 +343,12 @@ const game = {
     if (currentNodeIndex >= STORY_NODES.length) {
       this.won = true;
       if (typeof speak === "function") speak(STORY_NODES[STORY_NODES.length - 1].text);
-      document.getElementById("status").textContent = "SIGNAL LOCATED. GAME CLEARED.";
       if (this.patrolInterval) clearInterval(this.patrolInterval);
       return;
     }
 
     const node = STORY_NODES[currentNodeIndex];
     if (typeof speak === "function") speak(node.text);
-    document.getElementById("status").textContent = `Chapter ${currentNodeIndex + 1} of ${STORY_NODES.length}: ${node.title}`;
 
     if (currentNodeIndex + 1 < STORY_NODES.length) {
       this.goal.x = STORY_NODES[currentNodeIndex + 1].x;
@@ -321,6 +367,8 @@ const game = {
 
     this.pings -= 1;
     visualPulse = 1.5;
+
+    spawnGlobalRipple("rgba(0, 255, 204, ALPHA)", 18, 5);
 
     const dx = this.goal.x - this.player.x;
     const dy = this.goal.y - this.player.y;
@@ -352,6 +400,7 @@ const game = {
 
 // ─── DYNAMIC CAMERA & RENDERER ───────────────────────────────────────────────
 function drawLoop() {
+  drawAmbientBackground();
   renderGrid();
 
   if (visualPulse > 0) {
@@ -527,6 +576,11 @@ function renderGrid() {
 document.getElementById("start-btn").addEventListener("click", () => {
   if (typeof initAudio === "function") initAudio();
 
+  // FIX: This CSS injected here will securely hide the bottom text ONLY after you press start!
+  const style = document.createElement('style');
+  style.innerHTML = `body { color: transparent !important; } #game-ui, #grid-canvas, #game-ui * { color: white !important; }`;
+  document.head.appendChild(style);
+
   document.getElementById("intro-ui").style.display = "none";
   const gameUI = document.getElementById("game-ui");
   gameUI.style.display = "block";
@@ -548,23 +602,17 @@ document.getElementById("start-btn").addEventListener("click", () => {
   lastMoveAt = 0;
 
   if (typeof speak === "function") speak(STORY_NODES[0].text);
-  document.getElementById("status").textContent = `Chapter 1 of ${STORY_NODES.length}: ${STORY_NODES[0].title}`;
 
   if (!frameId) drawLoop();
 
   if (game.patrolInterval) clearInterval(game.patrolInterval);
 
-  // Patroller AI (normal patrol + hunt-on-noise)
   game.patrolInterval = setInterval(() => {
     if (!game.started || game.won) return;
 
-    // --- NEW: THE SAFE ZONE (Y <= 12) ---
-    // The signal from the Broadcast Tower disrupts the drones!
     const isSafeZone = game.player.y <= 12;
-
     let nearestP = nearestPatrollerInfo(game.player.x, game.player.y);
 
-    // If in the safe zone, wipe all aggro so they leave you alone
     if (isSafeZone) {
       game.chaseTicks = 0;
     } else {
@@ -588,7 +636,6 @@ document.getElementById("start-btn").addEventListener("click", () => {
     let playerHit = false;
 
     PATROLLERS.forEach(p => {
-      // Drones only hunt if you aren't in the Safe Zone
       if (game.chaseTicks > 0 && p === closestDrone && !isSafeZone) {
         const dx = game.player.x - p.x;
         const dy = game.player.y - p.y;
@@ -599,7 +646,6 @@ document.getElementById("start-btn").addEventListener("click", () => {
         p.x = clamp(p.x, 0, MAP.w - 1);
         p.y = clamp(p.y, 0, MAP.h - 1);
       } else {
-        // Normal patrol
         p.x += p.dir;
         if (p.x >= p.maxX || p.x <= p.minX) p.dir *= -1;
       }
@@ -618,6 +664,7 @@ document.getElementById("start-btn").addEventListener("click", () => {
       game.hp -= 10;
       playTone({ freq: 120, type: "sawtooth", duration: 0.3, volume: 0.2, pan: 0 });
       screenShake = 15;
+      spawnGlobalRipple("rgba(255, 0, 68, ALPHA)", 20, 8);
 
       if (game.hp <= 0) {
         killPlayer("Vital signs lost. Restarting chapter.");
