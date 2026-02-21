@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wake Up — An Audio Game</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* accent-rgb is the complementary highlight color as r,g,b for rgba() usage */
+  :root {
+    --accent-rgb: 255, 215, 0;
+  }
+
+  body {
+    /* Initial mood: deep purple + gold (Royal / Mythic) */
+    background-color: #3a1878;
+    color: #ffd700;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    user-select: none;
+    transition: background-color 1.8s ease, color 1.8s ease;
+  }
+
+  /* Ambient vignette */
+  #ambience {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    transition: background 2s ease;
+  }
+
+  #ambience.danger-near {
+    background: radial-gradient(ellipse at center, transparent 25%, rgba(180,0,0,0.5) 100%);
+  }
+
+  #ambience.goal-near {
+    background: radial-gradient(ellipse at center, transparent 20%, rgba(var(--accent-rgb), 0.12) 100%);
+  }
+
+  /* Dust particles — accent-colored */
+  .dust {
+    position: fixed;
+    width: 2px;
+    height: 2px;
+    background: rgba(var(--accent-rgb), 0.45);
+    border-radius: 50%;
+    pointer-events: none;
+    animation: drift linear infinite;
+  }
+
+  @keyframes drift {
+    from { transform: translateY(100vh) translateX(0); opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 0.5; }
+    to { transform: translateY(-10vh) translateX(var(--drift-x, 20px)); opacity: 0; }
+  }
+
+  /* Pulse ring */
+  #pulse-ring {
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    border: 1px solid rgba(var(--accent-rgb), 0.5);
+    pointer-events: none;
+    opacity: 0;
+    z-index: 1;
+  }
+
+  #pulse-ring.ping {
+    animation: ping 0.5s ease-out forwards;
+  }
+
+  @keyframes ping {
+    from { opacity: 1; transform: translateX(-50%) scale(0.4); }
+    to   { opacity: 0; transform: translateX(-50%) scale(3.2); }
+  }
+
+  /* Win flash — uses accent color instead of plain white */
+  #win-flash {
+    position: fixed;
+    inset: 0;
+    background: rgba(var(--accent-rgb), 1);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 100;
+    transition: opacity 3s ease;
+  }
+
+  #win-flash.show { opacity: 1; }
+
+  /* UI */
+  #screen {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    max-width: 480px;
+    padding: 2rem;
+  }
+
+  #title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(3rem, 10vw, 6rem);
+    font-style: normal;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    margin-bottom: 0.5rem;
+    opacity: 0;
+    animation: fadein 2s 0.5s ease forwards;
+  }
+
+  #subtitle {
+    font-size: 0.85rem;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    opacity: 0;
+    animation: fadein 2s 1.5s ease forwards;
+    color: inherit;
+    opacity: 0; /* overridden by fadein to 0.45 via filter */
+    margin-bottom: 3rem;
+    filter: opacity(0.45);
+  }
+
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  #narration {
+    font-size: clamp(1rem, 2.5vw, 1.2rem);
+    font-style: normal;
+    line-height: 1.9;
+    color: inherit;
+    opacity: 0.88;
+    min-height: 4em;
+    margin-bottom: 2.5rem;
+  }
+
+  /* In-game narration */
+  #narration-game {
+    font-style: normal;
+    line-height: 1.8;
+    font-size: 1.1rem;
+    color: inherit;
+    opacity: 0.88;
+    min-height: 4em;
+    margin-bottom: 2rem;
+  }
+
+  #controls-hint {
+    font-size: 0.75rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: inherit;
+    opacity: 0.35;
+    line-height: 2.2;
+  }
+
+  #start-btn {
+    display: inline-block;
+    margin-top: 2rem;
+    padding: 0.75rem 2.5rem;
+    border: 1px solid rgba(var(--accent-rgb), 0.5);
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 0.85rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: border-color 0.3s, background 0.3s;
+    opacity: 0;
+    animation: fadein 2s 2.5s ease forwards;
+  }
+
+  #start-btn:hover, #start-btn:focus {
+    background: rgba(var(--accent-rgb), 0.1);
+    outline: none;
+  }
+
+  #game-ui { display: none; }
+
+  #status {
+    font-size: 0.7rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: inherit;
+    opacity: 0.25;
+    margin-top: 2rem;
+  }
+
+  /* Canvas — rhythmically glows with accent color */
+  #grid-canvas {
+    display: block;
+    margin: 0 auto 2rem;
+    border: 1px solid rgba(var(--accent-rgb), 0.25);
+    border-radius: 3px;
+    max-width: 100%;
+    animation: canvasPulse 2s ease-in-out infinite;
+  }
+
+  @keyframes canvasPulse {
+    0%, 100% { box-shadow: 0 0 6px 0 rgba(var(--accent-rgb), 0.15); }
+    50%       { box-shadow: 0 0 22px 5px rgba(var(--accent-rgb), 0.3); }
+  }
+
+  /* Screen reader only */
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    border: 0;
+  }
+</style>
+</head>
+<body>
+<div id="ambience" aria-hidden="true"></div>
+<div id="pulse-ring" aria-hidden="true"></div>
+<div id="win-flash" aria-hidden="true"></div>
+
+<!-- Dust particles injected by JS -->
+
+<main id="screen" role="main">
+  <!-- Intro screen -->
+  <div id="intro-ui">
+    <h1 id="title">Wake Up</h1>
+    <p id="subtitle">an audio game</p>
+    <p id="narration" aria-live="polite">
+      You open your eyes.<br>
+      Your bedroom. Early morning.<br>
+      Something doesn't feel right.
+    </p>
+    <button id="start-btn" aria-label="Start game — put on headphones for the best experience">
+      Put on headphones &amp; begin
+    </button>
+  </div>
+
+  <!-- Game screen -->
+  <div id="game-ui" aria-hidden="true">
+    <canvas id="grid-canvas" width="360" height="360" aria-hidden="true"></canvas>
+    <p id="narration-game" aria-live="assertive"></p>
+    <div id="controls-hint">
+      WASD Move &nbsp;·&nbsp; Space Jump &nbsp;·&nbsp; Space×2 Dodge &nbsp;·&nbsp; J Interact<br>
+      Listen. The sound will guide you.
+    </div>
+    <div id="status" aria-live="polite"></div>
+  </div>
+</main>
+
+<span class="sr-only" id="sr-announce" aria-live="assertive" aria-atomic="true"></span>
+
+<script src="config.js"></script>
+<script src="audio.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
