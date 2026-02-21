@@ -1,141 +1,168 @@
-// ─── AUDIO ENGINE ────────────────────────────────────────────────────────────
-let ctx = null;
-let masterGain = null;
-let heartbeatInterval = null;
-let beaconInterval = null;
-let ambienceNodes = {};
+// ─── AUDIO ENGINE (FMOD) ──────────────────────────────────────────────────────
+// Requires fmodstudio.js + fmodstudio.wasm from fmod.com (HTML5 export)
+// Banks expected in ./banks/ : Master.bank, Master.strings.bank, SFX.bank, Music.bank
 
-function initAudio() {
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-  masterGain = ctx.createGain();
-  masterGain.gain.value = 0.8;
-  masterGain.connect(ctx.destination);
-  startAmbience();
-  startHeartbeat(60);
-}
+let gStudio = null;       // FMOD Studio system
+let gCoreSystem = null;   // FMOD Core system (for update loop)
 
-// Tone generator
-function playTone({ freq = 440, type = 'sine', duration = 0.1, volume = 0.3, pan = 0, attack = 0.01, decay = 0.05, detune = 0 }) {
-  if (!ctx) return;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  const panner = ctx.createStereoPanner();
+// Persistent event instances (looping sounds)
+let instHeartbeat = null;
+let instBeacon    = null;
+let instMusic     = null;
+let instDangerSnap = null; // snapshot
 
-  osc.type = type;
-  osc.frequency.value = freq;
-  osc.detune.value = detune;
-  panner.pan.value = Math.max(-1, Math.min(1, pan));
+let fmodReady = false;
+let updateHandle = null;
 
-  gain.gain.setValueAtTime(0, ctx.currentTime);
-  gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + attack);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration - decay);
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+async function initAudio() {
+  // FMOD's HTML5 module is loaded by fmodstudio.js and exposed as FMOD global
+  const FMODModule = {};
 
-  osc.connect(gain);
-  gain.connect(panner);
-  panner.connect(masterGain);
+  await new Promise((resolve) => {
+    FMODModule['onRuntimeInitialized'] = resolve;
+    FMOD(FMODModule);
+  });
 
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + duration);
-}
+  let out = {};
 
-// Noise burst (footstep)
-function playNoise({ duration = 0.06, volume = 0.08, pan = 0 }) {
-  if (!ctx) return;
-  const bufSize = ctx.sampleRate * duration;
-  const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1);
+  FMODModule.Studio.System.create(out);
+  gStudio = out.val;
 
-  const src = ctx.createBufferSource();
-  const gain = ctx.createGain();
-  const filter = ctx.createBiquadFilter();
-  const panner = ctx.createStereoPanner();
+  gStudio.getCoreSystem(out);
+  gCoreSystem = out.val;
 
-  src.buffer = buf;
-  filter.type = 'bandpass';
-  filter.frequency.value = 300;
-  filter.Q.value = 0.8;
-  gain.gain.setValueAtTime(volume, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-  panner.pan.value = pan;
+  gStudio.initialize(
+    64,                             // max channels
+    FMODModule.STUDIO_INITFLAGS.NORMAL,
+    FMODModule.INITFLAGS.NORMAL,
+    null
+  );
 
-  src.connect(filter);
-  filter.connect(gain);
-  gain.connect(panner);
-  panner.connect(masterGain);
-  src.start();
-}
-
-// Heartbeat
-function startHeartbeat(bpm) {
-  stopHeartbeat();
-  const interval = (60 / bpm) * 1000;
-  function beat() {
-    playTone({ freq: 55, type: 'sine', duration: 0.12, volume: 0.18, attack: 0.005 });
-    setTimeout(() => playTone({ freq: 48, type: 'sine', duration: 0.1, volume: 0.12, attack: 0.005 }), 120);
+  // Load banks (place .bank files in a ./banks/ folder next to gfb.html)
+  const banks = ['Master.bank', 'Master.strings.bank', 'SFX.bank', 'Music.bank'];
+  for (const name of banks) {
+    gStudio.loadBankFile(`banks/${name}`, FMODModule.STUDIO_LOAD_BANK_FLAGS.NORMAL, out);
   }
-  beat();
-  heartbeatInterval = setInterval(beat, interval);
+
+  fmodReady = true;
+
+  // FMOD requires a periodic update call
+  updateHandle = setInterval(() => gStudio.update(), 16);
+
+  _startMusic();
+  _startHeartbeat();
 }
 
-function stopHeartbeat() {
-  if (heartbeatInterval) clearInterval(heartbeatInterval);
+// ─── HELPER: create and start an event instance ───────────────────────────────
+function _createInstance(path) {
+  if (!fmodReady) return null;
+  const out = {};
+  const result = gStudio.getEvent(path, out);
+  if (result !== 0 /* FMOD_OK */) { console.warn('FMOD event not found:', path); return null; }
+  out.val.createInstance(out);
+  return out.val;
+}
+
+function _playOneShot(path, params = {}) {
+  const inst = _createInstance(path);
+  if (!inst) return;
+  for (const [k, v] of Object.entries(params)) inst.setParameterByName(k, v, false);
+  inst.start();
+  inst.release(); // auto-clean when done
+}
+
+// ─── MUSIC ────────────────────────────────────────────────────────────────────
+function _startMusic() {
+  instMusic = _createInstance('event:/Music/Adaptive');
+  if (!instMusic) return;
+  instMusic.setParameterByName('Danger', 0, false);
+  instMusic.start();
+}
+
+// Called by game.js updateSounds() — danger and df are 0–1
+function setMusicVolume(danger, df) {
+  if (!instMusic) return;
+  instMusic.setParameterByName('Danger', danger, false);
+  // Optional: drive a Distance/Goal parameter if you add one in FMOD Studio
+  // instMusic.setParameterByName('Distance', df, false);
+}
+
+// ─── HEARTBEAT ────────────────────────────────────────────────────────────────
+function _startHeartbeat() {
+  instHeartbeat = _createInstance('event:/SFX/Heartbeat');
+  if (!instHeartbeat) return;
+  instHeartbeat.setParameterByName('BPM', 60, false);
+  instHeartbeat.start();
 }
 
 function setHeartbeatBPM(bpm) {
-  stopHeartbeat();
-  startHeartbeat(bpm);
+  if (!instHeartbeat) return;
+  instHeartbeat.setParameterByName('BPM', Math.max(40, Math.min(180, bpm)), false);
 }
 
-// Beacon — directional tone toward goal
+// ─── BEACON ───────────────────────────────────────────────────────────────────
 function startBeacon(pan, distanceFactor) {
-  stopBeacon();
-  // distanceFactor: 0 = at goal, 1 = far away
-  const baseFreq = 330 + (1 - distanceFactor) * 220; // higher = closer
-  const vol = 0.05 + (1 - distanceFactor) * 0.2;
-
-  function pulse() {
-    playTone({ freq: baseFreq, type: 'sine', duration: 0.3, volume: vol, pan, attack: 0.05, decay: 0.2 });
-  }
-
-  const pulseRate = 400 + distanceFactor * 800; // faster when closer
-  pulse();
-  beaconInterval = setInterval(() => {
-    const df = game.distanceFactor();
-    const p = game.beaconPan();
-    const f = 330 + (1 - df) * 220;
-    const v = 0.05 + (1 - df) * 0.2;
-    playTone({ freq: f, type: 'sine', duration: 0.3, volume: v, pan: p, attack: 0.05, decay: 0.2 });
-  }, 1200);
+  if (instBeacon) { instBeacon.stop(0); instBeacon.release(); }
+  instBeacon = _createInstance('event:/SFX/Beacon');
+  if (!instBeacon) return;
+  instBeacon.setParameterByName('Pan', pan, false);
+  instBeacon.setParameterByName('Distance', distanceFactor, false);
+  instBeacon.start();
 }
 
 function stopBeacon() {
-  if (beaconInterval) clearInterval(beaconInterval);
+  if (!instBeacon) return;
+  instBeacon.stop(0 /* FMOD_STUDIO_STOP_ALLOWFADEOUT */);
+  instBeacon.release();
+  instBeacon = null;
 }
 
-// Danger sound
-function playDanger(intensity) {
-  // intensity 0–1
-  if (intensity <= 0) return;
-  playTone({ freq: 60 + intensity * 40, type: 'sawtooth', duration: 0.4, volume: intensity * 0.15, attack: 0.1, detune: Math.random() * 30 });
+// Update beacon parameters each move (called by game logic)
+function updateBeacon(pan, distanceFactor) {
+  if (!instBeacon) return;
+  instBeacon.setParameterByName('Pan', pan, false);
+  instBeacon.setParameterByName('Distance', distanceFactor, false);
 }
 
-// Ambient room sound (soft, looping hum — bedroom at night)
-function startAmbience() {
-  // Very soft hum like a house settling
-  playTone({ freq: 80, type: 'sine', duration: 60, volume: 0.02, attack: 2 });
+// ─── DANGER SNAPSHOT ─────────────────────────────────────────────────────────
+// Snapshots apply mix effects (e.g. low-pass, reverb) globally via FMOD Studio
+function triggerDangerSnapshot(intensity) {
+  if (!fmodReady) return;
+  if (intensity > 0.4 && !instDangerSnap) {
+    instDangerSnap = _createInstance('snapshot:/DangerZone');
+    if (instDangerSnap) instDangerSnap.start();
+  } else if (intensity <= 0.4 && instDangerSnap) {
+    instDangerSnap.stop(0);
+    instDangerSnap.release();
+    instDangerSnap = null;
+  }
 }
 
-// UI blip
+// ─── ONE-SHOT SFX ─────────────────────────────────────────────────────────────
+function playNoise({ pan = 0 } = {}) {
+  _playOneShot('event:/SFX/Footstep', { Pan: pan });
+}
+
 function playBlip() {
-  playTone({ freq: 660, type: 'sine', duration: 0.05, volume: 0.15, attack: 0.005 });
+  _playOneShot('event:/SFX/Blip');
 }
 
-// Win sound — rising warmth
+function playDanger(intensity) {
+  if (intensity <= 0) return;
+  _playOneShot('event:/SFX/Danger', { Intensity: intensity });
+}
+
 function playWin() {
   stopBeacon();
-  stopHeartbeat();
-  [440, 554, 659, 880].forEach((f, i) => {
-    setTimeout(() => playTone({ freq: f, type: 'sine', duration: 1.2, volume: 0.2, attack: 0.1 }), i * 200);
-  });
+  // Heartbeat will auto-stop if you set it to 0 or stop the instance
+  if (instHeartbeat) { instHeartbeat.stop(0); instHeartbeat.release(); instHeartbeat = null; }
+  _playOneShot('event:/SFX/Win');
+}
+
+// Wall bump — reuse Blip or give it its own event
+function playTone({ freq } = {}) {
+  // Thin compatibility shim: game.js calls playTone for wall bumps
+  // Route to a generic UI event; FMOD Studio controls the actual sound
+  _playOneShot('event:/SFX/Wall');
 }
