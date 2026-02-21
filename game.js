@@ -161,7 +161,12 @@ const TUTORIAL_LINES = [
   "The checkpoint is just ahead.",
 
   // 4 — tutorial checkpoint reached
-  "Tutorial complete. Trust the music. The real mission begins now."
+  "Tutorial complete. Trust the music. The real mission begins now.",
+
+  // 5 — hit a hazard during tutorial
+  "You walked into a danger zone and were sent back to the start. " +
+  "The guide music pans toward the safe gap in the wall. " +
+  "Follow the panning — do not walk straight into the red. Find the opening."
 ];
 
 // Updates the on-screen narration box AND speaks via TTS if available.
@@ -886,8 +891,21 @@ function renderGrid() {
     c.font = "bold 14px monospace";
     c.fillText(`PLAYER HP: ${game.hp}%`, 30, 38);
 
-  c.font = "bold 12px monospace";
-  c.fillText(`PINGS: ${game.pings}/${game.maxPings}`, 30, 58);
+    c.font = "bold 12px monospace";
+    c.fillText(`PINGS: ${game.pings}/${game.maxPings}`, 30, 58);
+
+    // Tutorial badge
+    if (isTutorial) {
+      c.fillStyle = "rgba(0, 0, 0, 0.7)";
+      c.fillRect(20, 82, 130, 24);
+      c.strokeStyle = "#00ffcc";
+      c.lineWidth = 1;
+      c.strokeRect(20, 82, 130, 24);
+      c.fillStyle = "#00ffcc";
+      c.font = "bold 11px monospace";
+      c.fillText("[ TUTORIAL MODE ]", 26, 98);
+    }
+  }
 }
 
 // ─── START & INPUTS ──────────────────────────────────────────────────────────
