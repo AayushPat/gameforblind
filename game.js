@@ -91,6 +91,7 @@ let audioCtx;
 function initAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === "suspended") audioCtx.resume();
+  initAmbienceLoops();
 }
 
 function playTone({ freq, type, duration, volume, pan = 0 }) {
@@ -150,6 +151,88 @@ function nearestPatrollerInfo(nx, ny) {
     if (dist < best.dist) best = { dist, dx, dy };
   }
   return best;
+}
+
+// ─── PATHFINDING & NAVIGATION HELPERS ────────────────────────────────────────
+let currentPath = [];
+
+// Returns {dist, gapX} for the nearest gap cell in the next hazard wall ahead.
+// Returns null if no walls between player and goal.
+function nearestGapInfo(px, py, goalY) {
+  const wallsAhead = HAZARDS.filter(h => {
+    if (!h.zones.length) return false;
+    const wallY = h.zones[0].y;
+    return wallY < py && wallY > goalY;
+  });
+  if (!wallsAhead.length) return null;
+
+  wallsAhead.sort((a, b) => Math.abs(a.zones[0].y - py) - Math.abs(b.zones[0].y - py));
+  const nearestWall = wallsAhead[0];
+  const wallY       = nearestWall.zones[0].y;
+  const hazardXs    = new Set(nearestWall.zones.map(z => z.x));
+
+  let minDist = Infinity, gapX = px;
+  for (let x = 0; x < MAP.w; x++) {
+    if (!hazardXs.has(x)) {
+      const d = Math.sqrt((px - x) ** 2 + (py - wallY) ** 2);
+      if (d < minDist) { minDist = d; gapX = x; }
+    }
+  }
+  return { dist: minDist, gapX };
+}
+
+// Returns true if any hazard wall row sits between the player and goal Y.
+function hasWallBetween(py, gy) {
+  const minY = Math.min(py, gy);
+  const maxY = Math.max(py, gy);
+  return HAZARDS.some(h => {
+    if (!h.zones.length) return false;
+    const wallY = h.zones[0].y;
+    return wallY > minY && wallY < maxY;
+  });
+}
+
+function _buildBlockedSet() {
+  const blocked = new Set();
+  for (const hazard of HAZARDS)
+    for (const z of hazard.zones)
+      blocked.add(`${z.x},${z.y}`);
+  return blocked;
+}
+
+function computePath(startX, startY, goalX, goalY) {
+  const blocked = _buildBlockedSet();
+  const startKey = `${startX},${startY}`;
+  const goalKey  = `${goalX},${goalY}`;
+
+  const queue   = [startKey];
+  const visited = new Set([startKey]);
+  const parent  = new Map();
+
+  while (queue.length) {
+    const key = queue.shift();
+    if (key === goalKey) {
+      const path = [];
+      let k = key;
+      while (k !== startKey) {
+        const [x, y] = k.split(',').map(Number);
+        path.unshift({ x, y });
+        k = parent.get(k);
+      }
+      return path;
+    }
+    const [cx, cy] = key.split(',').map(Number);
+    for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < 0 || nx >= MAP.w || ny < 0 || ny >= MAP.h) continue;
+      const nk = `${nx},${ny}`;
+      if (visited.has(nk) || blocked.has(nk)) continue;
+      visited.add(nk);
+      parent.set(nk, key);
+      queue.push(nk);
+    }
+  }
+  return []; // no path
 }
 
 // ─── GLOBAL STATE ────────────────────────────────────────────────────────────
@@ -232,6 +315,8 @@ const game = {
       if (nx === p.x && ny === p.y) tookDamage = true;
     }
 
+    // Danger music — reuse the helper results computed below for efficiency
+    // (computed after the damage check so we can share hz/pt with tone system)
     if (tookDamage) {
       this.hp -= 10;
       playTone({ freq: 120, type: "sawtooth", duration: 0.3, volume: 0.2, pan: 0 });
@@ -250,21 +335,25 @@ const game = {
     this.player.x = nx;
     this.player.y = ny;
 
+    // Shared proximity info for both tone system and danger music
     const hz = nearestHazardInfo(nx, ny);
     const pt = nearestPatrollerInfo(nx, ny);
-
     const nearest = (pt.dist < hz.dist) ? pt : hz;
     const pan = normPan(nearest.dx);
 
-    if (Math.min(hz.dist, pt.dist) <= 5.5) {
-      const dangerDist = Math.min(hz.dist, pt.dist);
-      const dangerLevel = clamp((5.5 - dangerDist) / 5.5, 0, 1);
+    // Danger music crossfade
+    const dangerLevel = Math.pow(Math.max(0, Math.min(1, (6 - nearest.dist) / 5)), 2);
+    const dangerPan   = Math.max(-1, Math.min(1, nearest.dx / 1.2));
+    if (typeof updateDangerMusic === "function") updateDangerMusic(dangerLevel, dangerPan);
 
+    // Proximity oscillator tones
+    if (nearest.dist <= 5.5) {
+      const dl = clamp((5.5 - nearest.dist) / 5.5, 0, 1);
       playTone({
-        freq: 220 + dangerLevel * 260,
+        freq: 220 + dl * 260,
         type: "square",
         duration: 0.12,
-        volume: 0.03 + dangerLevel * 0.08,
+        volume: 0.03 + dl * 0.08,
         pan
       });
     } else {
@@ -278,7 +367,22 @@ const game = {
       });
     }
 
+    // Music path guide: directional ambience panned toward gap / checkpoint
+    currentPath = computePath(this.player.x, this.player.y, this.goal.x, this.goal.y);
+    const gapInfo = nearestGapInfo(this.player.x, this.player.y, this.goal.y);
+    let pathGuideLevel, pathGuidePan;
+    if (!gapInfo) {
+      const df = this.distanceFactor();
+      pathGuideLevel = Math.pow(Math.max(0, Math.min(1, (0.45 - df) / 0.4)), 2);
+      pathGuidePan   = Math.max(-1, Math.min(1, (this.goal.x - this.player.x) / 3));
+    } else {
+      pathGuideLevel = Math.max(0, Math.min(1, (8 - gapInfo.dist) / 7));
+      pathGuidePan   = Math.max(-1, Math.min(1, (gapInfo.gapX - this.player.x) / 3));
+    }
+    if (typeof updatePathGuide === "function") updatePathGuide(pathGuideLevel, pathGuidePan);
+
     if (this.player.x === this.goal.x && this.player.y === this.goal.y) {
+      if (typeof updatePathGuide === "function") updatePathGuide(0);
       playTone({ freq: 600, type: "sine", duration: 0.4, volume: 0.1, pan: 0 });
       setTimeout(() => playTone({ freq: 800, type: "sine", duration: 0.6, volume: 0.1, pan: 0 }), 200);
 
@@ -308,6 +412,7 @@ const game = {
       this.goal.x = STORY_NODES[currentNodeIndex + 1].x;
       this.goal.y = STORY_NODES[currentNodeIndex + 1].y;
     }
+    currentPath = computePath(this.player.x, this.player.y, this.goal.x, this.goal.y);
   },
 
   interact() {
@@ -416,6 +521,15 @@ function renderGrid() {
   }
 
   const time = Date.now() / 300;
+
+  // Draw optimal path as faint dots
+  currentPath.forEach((cell, i) => {
+    const t = i / Math.max(1, currentPath.length - 1); // 0 = near player, 1 = near goal
+    c.beginPath();
+    c.arc(cell.x * CELL + CELL / 2, cell.y * CELL + CELL / 2, 3, 0, Math.PI * 2);
+    c.fillStyle = `rgba(0, 255, 204, ${0.08 + t * 0.1})`; // slightly brighter toward goal
+    c.fill();
+  });
 
   HAZARDS.forEach(hazard => {
     hazard.zones.forEach(z => {
@@ -550,6 +664,7 @@ document.getElementById("start-btn").addEventListener("click", () => {
   if (typeof speak === "function") speak(STORY_NODES[0].text);
   document.getElementById("status").textContent = `Chapter 1 of ${STORY_NODES.length}: ${STORY_NODES[0].title}`;
 
+  currentPath = computePath(game.player.x, game.player.y, game.goal.x, game.goal.y);
   if (!frameId) drawLoop();
 
   if (game.patrolInterval) clearInterval(game.patrolInterval);
