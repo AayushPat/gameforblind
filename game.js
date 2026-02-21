@@ -176,6 +176,36 @@ function tutorialNarrate(text, onDone = null) {
   speak(text, { lock: true, canCut: false, onDone });
 }
 
+// Skip the tutorial (e.g. on Enter). Restores main world and places player at first checkpoint.
+function skipTutorial() {
+  if (!isTutorial || !game.started) return;
+  if (_ttsAudio) {
+    _ttsAudio.pause();
+    _ttsAudio.src = "";
+    _ttsAudio = null;
+  }
+  _ttsSpeaking = false;
+  _narrationLock = false;
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+  isTutorial = false;
+  HAZARDS    = MAIN_HAZARDS;
+  PATROLLERS = MAIN_PATROLLERS;
+  tutorialStep = 5;
+
+  game.player.x = STORY_NODES[1].x;
+  game.player.y = STORY_NODES[1].y;
+  currentNodeIndex = 1;
+  visualPulse = 2.0;
+  game.goal.x = STORY_NODES[2].x;
+  game.goal.y = STORY_NODES[2].y;
+  currentPath = computePath(game.player.x, game.player.y, game.goal.x, game.goal.y);
+
+  if (typeof playCheckpoint === "function") playCheckpoint();
+  const el = document.getElementById("narration-game");
+  if (el) el.textContent = "Tutorial skipped. The real mission begins now.";
+}
+
 // ─── ElevenLabs TTS ──────────────────────────────────────────────────────────
 let _ttsAudio      = null;
 let _ttsSpeaking   = false;
@@ -186,32 +216,59 @@ let _narrationLock = false;  // blocks player movement while tutorial is talking
 const _audioCache = new Map();
 
 async function _fetchAudio(text) {
-  const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${EL_VOICE_ID}/stream`,
-    {
+  // Use the local TTS proxy when the page is served over http(s). This avoids CORS
+  // and keeps the API key on the server. Run: node server.js then open the given URL.
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    const res = await fetch("/api/tts", {
       method: "POST",
-      headers: {
-        "xi-api-key": EL_API_KEY,
-        "Content-Type": "application/json",
-        "Accept": "audio/mpeg"
-      },
-      body: JSON.stringify({
-        text,
-        model_id: "eleven_turbo_v2_5",
-        voice_settings: { stability: 0.50, similarity_boost: 0.75 }
-      })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`TTS failed (${res.status}): ${errBody || res.statusText}`);
     }
-  );
-  if (!res.ok) throw new Error("TTS fetch failed");
-  return URL.createObjectURL(await res.blob());
+    return URL.createObjectURL(await res.blob());
+  }
+  throw new Error("Open the game via the local server (run: node server.js, then open the URL shown) to use the AI narrator.");
 }
 
 // Pre-warm all tutorial lines in parallel while user reads the intro screen.
-// By the time they click start the blobs are ready → zero perceptible delay.
-(async () => {
-  await Promise.all(TUTORIAL_LINES.map(async text => {
-    try { _audioCache.set(text, await _fetchAudio(text)); } catch (_) {}
-  }));
+// TTS goes through the local proxy (node server.js) to avoid CORS.
+function _setTtsStatus(msg, isOk = false) {
+  const el = document.getElementById("tts-status");
+  if (el) el.textContent = msg;
+}
+
+const _ttsReady = (async () => {
+  if (window.location.protocol === "file:") {
+    _setTtsStatus("To use the AI narrator, run: node server.js in this folder, then open the URL shown.");
+    return;
+  }
+  try {
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Hi." })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      _setTtsStatus("AI narrator unavailable (" + res.status + "). Run node server.js in this folder and use the URL it prints.");
+      return;
+    }
+    await res.blob();
+    _setTtsStatus("AI narrator: Ready. Click the button above to start.");
+  } catch (e) {
+    _setTtsStatus("AI narrator unavailable. Run: node server.js in this folder, then open http://localhost:3000/gfb.html");
+    return;
+  }
+  for (const text of TUTORIAL_LINES) {
+    try {
+      _audioCache.set(text, await _fetchAudio(text));
+    } catch (e) {
+      console.error("TTS pre-warm failed:", e.message || e);
+    }
+  }
 })();
 
 // options:
@@ -241,15 +298,54 @@ async function speak(text, { lock = false, canCut = true, onDone = null } = {}) 
   try {
     // Use cached blob URL if available (tutorial lines), otherwise fetch live
     const url = _audioCache.has(text) ? _audioCache.get(text) : await _fetchAudio(text);
+    const narEl = document.getElementById("narration-game");
+    const statusEl = document.getElementById("status");
+    if (narEl) narEl.removeAttribute("data-tts-fallback");
+    if (statusEl) statusEl.textContent = "";
     _ttsAudio = new Audio(url);
-    _ttsAudio.play().catch(() => {});
+    const doFallback = () => {
+      if (!_ttsAudio) return;
+      _ttsAudio = null;
+      if (!_audioCache.has(text)) URL.revokeObjectURL(url);
+      const statusEl = document.getElementById("status");
+      if (statusEl) statusEl.textContent = "AI audio failed to play; using browser voice.";
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        const utt = new SpeechSynthesisUtterance(text);
+        utt.rate = 0.88;
+        utt.pitch = 0.95;
+        utt.onend = finish;
+        utt.onerror = finish;
+        window.speechSynthesis.speak(utt);
+      } else finish();
+    };
     _ttsAudio.onended = () => {
-      // Only revoke if it was a live fetch (not a cached tutorial line)
       if (!_audioCache.has(text)) URL.revokeObjectURL(url);
       finish();
     };
-  } catch (_) {
-    finish();
+    _ttsAudio.onerror = doFallback;
+    _ttsAudio.play().catch(doFallback);
+  } catch (e) {
+    console.error("TTS speak failed:", e);
+    const narEl = document.getElementById("narration-game");
+    const statusEl = document.getElementById("status");
+    if (narEl && e && e.message) {
+      narEl.setAttribute("data-tts-fallback", "1");
+      narEl.title = "Using browser voice (Eleven Labs failed: " + (e.message || "").slice(0, 80) + ")";
+    }
+    if (statusEl) statusEl.textContent = "Using browser voice. For AI narrator, open this page via a local server (e.g. npx serve).";
+    // Fallback: browser built-in speech synthesis
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.rate = 0.88;
+      utt.pitch = 0.95;
+      utt.onend = finish;
+      utt.onerror = finish;
+      window.speechSynthesis.speak(utt);
+    } else {
+      finish();
+    }
   }
 }
 
@@ -522,30 +618,54 @@ const game = {
     const nearest = (pt.dist < hz.dist) ? pt : hz;
     const pan = normPan(nearest.dx);
 
-    // Danger music crossfade
+    // Danger music crossfade (isDrone = patroller is the closer threat → slightly lower pitch for panic)
     const dangerLevel = Math.pow(Math.max(0, Math.min(1, (6 - nearest.dist) / 5)), 2);
     const dangerPan   = Math.max(-1, Math.min(1, nearest.dx / 1.2));
-    if (typeof updateDangerMusic === "function") updateDangerMusic(dangerLevel, dangerPan);
+    const isDrone = pt.dist < hz.dist;
+    if (typeof updateDangerMusic === "function") updateDangerMusic(dangerLevel, dangerPan, isDrone);
 
-    // Proximity oscillator tones
+    // Proximity oscillator tones — noticeably louder when right next to hazard/drone
     if (nearest.dist <= 5.5) {
       const dl = clamp((5.5 - nearest.dist) / 5.5, 0, 1);
+      let vol = 0.03 + dl * 0.08;
+      if (nearest.dist <= 1.5) {
+        vol = 0.18 + (1.5 - nearest.dist) / 1.5 * 0.14;
+      }
+      vol = clamp(vol, 0, 0.4);
       playTone({
         freq: 220 + dl * 260,
         type: "square",
         duration: 0.12,
-        volume: 0.03 + dl * 0.08,
+        volume: vol,
         pan
       });
+      if (nearest.dist <= 2) {
+        const buzzVol = 0.04 + (2 - nearest.dist) / 2 * 0.05;
+        playTone({ freq: 65, type: "sawtooth", duration: 0.06, volume: buzzVol, pan });
+      }
     } else {
       const gdx = this.goal.x - nx;
+      const distToGoalBefore = Math.hypot(this.goal.x - this.player.x, this.goal.y - this.player.y);
+      const distToGoalAfter  = Math.hypot(this.goal.x - nx, this.goal.y - ny);
+      const movedAway = distToGoalAfter > distToGoalBefore;
+      const goalPan = normPan(gdx);
+      let vol;
+      if (movedAway) {
+        vol = 0.012;
+      } else {
+        vol = 0.025 + (1 - Math.min(distToGoalAfter, 25) / 25) * 0.11;
+      }
+      vol = clamp(vol, 0.01, 0.2);
       playTone({
         freq: 420,
         type: "sine",
         duration: 0.04,
-        volume: 0.02,
-        pan: normPan(gdx)
+        volume: vol,
+        pan: goalPan
       });
+      if (distToGoalAfter <= 2) {
+        playTone({ freq: 120, type: "triangle", duration: 0.05, volume: 0.03 + (2 - distToGoalAfter) / 2 * 0.03, pan: goalPan });
+      }
     }
 
     // Music path guide: fixed-volume ambience panned toward ideal next move
@@ -566,17 +686,19 @@ const game = {
     if (isTutorial) {
       tutorialMoves++;
 
+      // Step 3 → 5: player crossed the gap (before or without "danger close" line)
+      if (tutorialStep === 3 && this.player.y <= 73) {
+        tutorialStep = 5;
+      }
       // Step 1 → 2: player has explored a bit and is approaching the wall
       if (tutorialStep === 1 && nearest.dist < 6 && tutorialMoves > 4) {
         tutorialStep = 2;
         tutorialNarrate(TUTORIAL_LINES[1], () => { tutorialStep = 3; });
-
-      // Step 3 → 4: player is right on the edge of the danger zone
+      // Step 3 → 4: player is very close to the wall — play "danger close" (line 2)
       } else if (tutorialStep === 3 && nearest.dist < 3) {
         tutorialStep = 4;
         tutorialNarrate(TUTORIAL_LINES[2], () => { tutorialStep = 5; });
-
-      // Step 5 → 6: player has passed through the gap
+      // Step 5 → 6: player has passed through the gap — play "you made it through" (line 3)
       } else if (tutorialStep === 5 && this.player.y <= 73) {
         tutorialStep = 6;
         tutorialNarrate(TUTORIAL_LINES[3], () => { tutorialStep = 7; });
@@ -727,7 +849,9 @@ function drawLoop() {
       beaconTimer = 0;
       const pan = normPan(dx);
       const freq = clamp(250 + (20 - d) * 25, 180, 900);
-      const vol = clamp(0.02 + (1 - d / 20) * 0.08, 0.02, 0.12);
+      let vol = 0.02 + (1 - d / 20) * 0.08;
+      if (d <= 3) vol = 0.15 + (3 - d) / 3 * 0.12;
+      vol = clamp(vol, 0.02, 0.28);
       playTone({ freq, type: "sine", duration: 0.08, volume: vol, pan });
     }
   }
@@ -919,8 +1043,13 @@ function renderGrid() {
 }
 
 // ─── START & INPUTS ──────────────────────────────────────────────────────────
-document.getElementById("start-btn").addEventListener("click", () => {
+document.getElementById("start-btn").addEventListener("click", async () => {
   if (typeof initAudio === "function") initAudio();
+
+  // Unlock browser autoplay policy synchronously so async speak() calls work.
+  // A silent 1-sample WAV played from the click handler activates the page.
+  const _unlock = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=");
+  _unlock.play().catch(() => {});
 
   const style = document.createElement('style');
   style.innerHTML = `body { color: transparent !important; } #game-ui, #grid-canvas, #game-ui * { color: white !important; }`;
@@ -955,6 +1084,9 @@ document.getElementById("start-btn").addEventListener("click", () => {
   beaconTimer = 0;
   lastMoveAt = 0;
 
+  // Ensure TTS pre-warm has finished so Eleven Labs cache is used when available
+  try { await _ttsReady; } catch (_) {}
+
   // Welcome locked — step advances to 1 only after audio fully finishes
   tutorialNarrate(TUTORIAL_LINES[0], () => {
     tutorialStep = 1;
@@ -971,9 +1103,11 @@ document.getElementById("start-btn").addEventListener("click", () => {
     if (!game.started || game.won) return;
 
     const isSafeZone = game.player.y <= 12;
+    const isEarlyChapter = currentNodeIndex < 3;
+    const isOnCheckpointRow = STORY_NODES.some(n => n.y === game.player.y);
     let nearestP = nearestPatrollerInfo(game.player.x, game.player.y);
 
-    if (isSafeZone) {
+    if (isSafeZone || isEarlyChapter || isOnCheckpointRow) {
       game.chaseTicks = 0;
     } else {
       if (nearestP.dist <= game.chaseRadius || game.noise > 0.55) {
@@ -996,7 +1130,7 @@ document.getElementById("start-btn").addEventListener("click", () => {
     let playerHit = false;
 
     PATROLLERS.forEach(p => {
-      if (game.chaseTicks > 0 && p === closestDrone && !isSafeZone) {
+      if (game.chaseTicks > 0 && p === closestDrone && !isSafeZone && !isEarlyChapter && !isOnCheckpointRow) {
         const dx = game.player.x - p.x;
         const dy = game.player.y - p.y;
 
@@ -1015,9 +1149,17 @@ document.getElementById("start-btn").addEventListener("click", () => {
 
     nearestP = nearestPatrollerInfo(game.player.x, game.player.y);
     if (nearestP.dist <= 8) {
-      const vol = clamp(0.01 + (1 - nearestP.dist / 8) * 0.12, 0.01, 0.14);
+      let vol = 0.01 + (1 - nearestP.dist / 8) * 0.12;
+      if (nearestP.dist <= 2) {
+        vol = 0.22 + (2 - nearestP.dist) / 2 * 0.18;
+      }
+      vol = clamp(vol, 0.01, 0.42);
+      const dronePan = normPan(nearestP.dx);
       const freq = clamp(180 + (1 - nearestP.dist / 8) * 280, 180, 550);
-      playTone({ freq, type: "triangle", duration: 0.08, volume: vol, pan: normPan(nearestP.dx) });
+      playTone({ freq, type: "triangle", duration: 0.08, volume: vol, pan: dronePan });
+      if (nearestP.dist <= 2) {
+        playTone({ freq: 55, type: "sawtooth", duration: 0.05, volume: 0.035 + (2 - nearestP.dist) / 2 * 0.03, pan: dronePan });
+      }
     }
 
     if (playerHit) {
@@ -1036,7 +1178,7 @@ document.getElementById("start-btn").addEventListener("click", () => {
     }
 
     if (game.chaseTicks > 0) game.chaseTicks -= 1;
-  }, 600);
+  }, 880);
 });
 
 const KEY_MAP = {
@@ -1047,6 +1189,16 @@ const KEY_MAP = {
 };
 
 document.addEventListener("keydown", (e) => {
+  if (e.key === " " && !game.started) {
+    e.preventDefault();
+    document.getElementById("start-btn").click();
+    return;
+  }
+  if (e.key === "Enter" && game.started && isTutorial) {
+    e.preventDefault();
+    skipTutorial();
+    return;
+  }
   if (e.key === "j" || e.key === "J" || e.key === " ") {
     e.preventDefault();
     game.interact();

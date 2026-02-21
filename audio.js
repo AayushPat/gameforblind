@@ -51,6 +51,10 @@ async function _makeLoop(src, initialVolume, outputNode) {
       gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
       gainNode.gain.value = Math.max(0, Math.min(4, v));
     },
+    get playbackRate() { return source.playbackRate.value; },
+    set playbackRate(v) {
+      source.playbackRate.setTargetAtTime(Math.max(0.5, Math.min(2, v)), audioCtx.currentTime, 0.05);
+    },
     fadeTo(v, secs) {
       const clamped = Math.max(0, Math.min(4, v));
       gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
@@ -79,11 +83,13 @@ function updatePathGuide(level, pan = 0) {
 }
 
 // ─── DANGER CROSSFADE ─────────────────────────────────────────────────────────
-// level: 0 = safe, 1 = max danger  |  pan: -1 left … 1 right
-function updateDangerMusic(level, pan = 0) {
+// level: 0 = safe, 1 = max danger  |  pan: -1 left … 1 right  |  isDrone: pitch down for drones
+function updateDangerMusic(level, pan = 0, isDrone = false) {
   if (!_audioReady) return;
   _dangerLevel = level;
   _danger.volume = level;
+  // Slightly lower pitch when danger is from a drone — same music, more panic/dread
+  _danger.playbackRate = (level > 0 && isDrone) ? 0.88 : 1.0;
   // Re-sync path guide whenever danger changes
   if (_exploring) {
     const target = _pathGuideLevel * 2.0 * Math.max(0, 1 - _dangerLevel);
