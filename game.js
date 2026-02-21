@@ -1,21 +1,20 @@
 // ─── CONTINUOUS MAP CONFIGURATION ────────────────────────────────────────────
-const MAP = { w: 20, h: 60 };
+const MAP = { w: 20, h: 80 }; // EXPANDED GRID HEIGHT
 const CELL = 40;
 
 const STORY_NODES = [
-  { title: "The Safehouse", x: 10, y: 58, text: "Chapter 1. You wake up. The SOS signal is breaking through the static. You need to grab your gear and find the door out." },
-  { title: "The Alleyway", x: 10, y: 50, text: "Chapter 2. You step outside into a light drizzle. Navigate the narrow alley, but avoid the jagged scrap metal piled against the walls." },
-  { title: "The Flooded Street", x: 4, y: 43, text: "Chapter 3. The main road is flooded. The water is deep and moving fast. Step carefully across the submerged cars." },
-  { title: "The Overgrown Park", x: 15, y: 36, text: "Chapter 4. You enter a park reclaimed by wild dogs. Move quietly so they don't hear you." },
-  { title: "The Subway Descent", x: 10, y: 29, text: "Chapter 5. The streets are blocked. You must go underground into the echoing, pitch-black subway tunnels." },
-  { title: "The Train Graveyard", x: 5, y: 22, text: "Chapter 6. You are lost in a maze of derailed subway cars. Weave through the open doors to find the exit stairs." },
-  { title: "The Ascend", x: 15, y: 15, text: "Chapter 7. You find the stairwell of the skyscraper. It's a grueling climb, but the signal is getting louder." },
-  { title: "The Collapsed Floor", x: 10, y: 8, text: "Chapter 8. The floorboards here are rotted. One wrong step and you'll fall through the ceiling. Listen for the groaning wood." },
-  { title: "The Roof Edge", x: 5, y: 3, text: "Chapter 9. You are on the roof. The wind is howling. Walk along the narrow ledge to reach the tower." },
-  { title: "The Broadcast Tower", x: 10, y: 0, text: "Chapter 10. You open the door, cutting off the wind. The room hums with electricity. You found the source." }
+  { title: "The Safehouse", x: 10, y: 78, text: "Chapter 1. You wake up. The SOS signal is breaking through the static. You need to grab your gear and find the door out." },
+  { title: "The Alleyway", x: 10, y: 69, text: "Chapter 2. You step outside into a light drizzle. Navigate the narrow alley, but avoid the jagged scrap metal piled against the walls." },
+  { title: "The Flooded Street", x: 4, y: 60, text: "Chapter 3. The main road is flooded. The water is deep and moving fast. Step carefully across the submerged cars." },
+  { title: "The Overgrown Park", x: 15, y: 51, text: "Chapter 4. You enter a park reclaimed by wild dogs. Move quietly so they don't hear you." },
+  { title: "The Subway Descent", x: 10, y: 42, text: "Chapter 5. The streets are blocked. You must go underground into the echoing, pitch-black subway tunnels." },
+  { title: "The Train Graveyard", x: 5, y: 33, text: "Chapter 6. You are lost in a maze of derailed subway cars. Weave through the open doors to find the exit stairs." },
+  { title: "The Ascend", x: 15, y: 24, text: "Chapter 7. You find the stairwell of the skyscraper. It's a grueling climb, but the signal is getting louder." },
+  { title: "The Collapsed Floor", x: 10, y: 15, text: "Chapter 8. The floorboards here are rotted. One wrong step and you'll fall through the ceiling. Listen for the groaning wood." },
+  { title: "The Roof Edge", x: 10, y: 8, text: "Chapter 9. You are on the roof. The wind is howling. Walk along the narrow ledge to reach the tower." },
+  { title: "The Broadcast Tower", x: 10, y: 1, text: "Chapter 10. You open the door, cutting off the wind. The room hums with electricity. You found the source." }
 ];
 
-// Helper for horizontal walls with a gap
 function createWall(y, gapStartX, gapEndX) {
   let zones = [];
   for (let x = 0; x < MAP.w; x++) {
@@ -26,7 +25,6 @@ function createWall(y, gapStartX, gapEndX) {
   return { zones: zones, intensityRadius: 2.0 };
 }
 
-// NEW Helper: creates solid rectangular blocks of hazards
 function createBlock(startX, startY, w, h) {
   let zones = [];
   for (let x = startX; x < startX + w; x++) {
@@ -39,44 +37,52 @@ function createBlock(startX, startY, w, h) {
   return { zones: zones, intensityRadius: 2.5 };
 }
 
-// NEW: A much more varied and interesting map layout!
+// REMAPPED HAZARDS FOR TALLER GRID
 const HAZARDS = [
-  // Intro: Simple wall
-  createWall(54, 8, 12),
+  createWall(74, 8, 12),
 
-  // The Minefield (Scattered debris)
-  createBlock(2, 47, 3, 3),
-  createBlock(14, 46, 4, 2),
-  createBlock(8, 48, 2, 2),
-  createBlock(10, 44, 2, 2),
+  // The Minefield
+  createBlock(2, 65, 3, 3),
+  createBlock(14, 64, 4, 2),
+  createBlock(8, 66, 2, 2),
+  createBlock(10, 62, 2, 2),
 
-  // The Gauntlet (Narrow vertical tunnel in the center)
-  createBlock(0, 38, 6, 4),   // Thick left wall
-  createBlock(14, 38, 6, 4),  // Thick right wall
+  // The Gauntlet
+  createBlock(0, 56, 6, 4),
+  createBlock(14, 56, 6, 4),
 
   // Zig-Zag Walls
-  createWall(34, 1, 6),       // Gap on far left
-  createWall(31, 13, 18),     // Gap on far right
+  createWall(48, 1, 6),
+  createWall(45, 13, 18),
 
-  // The Blockade (Massive central structure, must go around)
-  createBlock(4, 24, 12, 4),
+  // The Blockade
+  createBlock(4, 38, 12, 4),
 
   // The Broken Bridge
-  createBlock(0, 18, 5, 2),
-  createBlock(8, 18, 4, 2),
-  createBlock(15, 18, 5, 2),
+  createBlock(0, 28, 5, 2),
+  createBlock(8, 28, 4, 2),
+  createBlock(15, 28, 5, 2),
 
-  // Final stretch maze
-  createWall(12, 8, 11),
-  createWall(9, 2, 5),
-  createWall(5, 14, 17)
+  // The Vents (Tricky maze before the roof)
+  createBlock(2, 18, 6, 2),
+  createBlock(12, 18, 6, 2),
+  createBlock(6, 20, 8, 2),
+
+  // --- THE CLIMAX: The Narrow Ledge (Chapter 9 to 10) ---
+  // Blocks the entire left and right side of the roof.
+  // You can ONLY walk on x=9 and x=10.
+  createBlock(0, 2, 9, 6),  // Left drop-off
+  createBlock(11, 2, 9, 6)  // Right drop-off
 ];
 
+// Added more patrollers for the longer map
 const PATROLLERS = [
-  { x: 2, y: 45, minX: 1, maxX: 18, dir: 1 },
-  { x: 18, y: 31, minX: 1, maxX: 18, dir: -1 },
-  { x: 5, y: 20, minX: 1, maxX: 18, dir: 1 },
-  { x: 15, y: 10, minX: 1, maxX: 18, dir: -1 }
+  { x: 2, y: 65, minX: 1, maxX: 18, dir: 1 },
+  { x: 18, y: 55, minX: 1, maxX: 18, dir: -1 },
+  { x: 5, y: 45, minX: 1, maxX: 18, dir: 1 },
+  { x: 15, y: 30, minX: 1, maxX: 18, dir: -1 },
+  { x: 8, y: 17, minX: 1, maxX: 18, dir: 1 }
+  // Notice: No patrollers spawn above y=15 (The Safe Zone)
 ];
 
 // ─── AUDIO SYSTEM ────────────────────────────────────────────────────────────
@@ -552,16 +558,23 @@ document.getElementById("start-btn").addEventListener("click", () => {
   game.patrolInterval = setInterval(() => {
     if (!game.started || game.won) return;
 
+    // --- NEW: THE SAFE ZONE (Y <= 12) ---
+    // The signal from the Broadcast Tower disrupts the drones!
+    const isSafeZone = game.player.y <= 12;
+
     let nearestP = nearestPatrollerInfo(game.player.x, game.player.y);
 
-    // Increase chase pressure if close OR noisy
-    if (nearestP.dist <= game.chaseRadius || game.noise > 0.55) {
-      game.chaseTicks = Math.min(8, game.chaseTicks + 2);
+    // If in the safe zone, wipe all aggro so they leave you alone
+    if (isSafeZone) {
+      game.chaseTicks = 0;
     } else {
-      game.chaseTicks = Math.max(0, game.chaseTicks - 1);
+      if (nearestP.dist <= game.chaseRadius || game.noise > 0.55) {
+        game.chaseTicks = Math.min(8, game.chaseTicks + 2);
+      } else {
+        game.chaseTicks = Math.max(0, game.chaseTicks - 1);
+      }
     }
 
-    // NEW LOGIC: Find the exact single drone closest to the player
     let closestDrone = null;
     let minDist = Infinity;
     PATROLLERS.forEach(p => {
@@ -575,16 +588,14 @@ document.getElementById("start-btn").addEventListener("click", () => {
     let playerHit = false;
 
     PATROLLERS.forEach(p => {
-      // ONLY the closest drone hunts the player. The others keep patrolling normally.
-      if (game.chaseTicks > 0 && p === closestDrone) {
-        // Hunt: greedy step toward player
+      // Drones only hunt if you aren't in the Safe Zone
+      if (game.chaseTicks > 0 && p === closestDrone && !isSafeZone) {
         const dx = game.player.x - p.x;
         const dy = game.player.y - p.y;
 
         if (Math.abs(dx) > Math.abs(dy)) p.x += Math.sign(dx);
         else p.y += Math.sign(dy);
 
-        // Keep in bounds
         p.x = clamp(p.x, 0, MAP.w - 1);
         p.y = clamp(p.y, 0, MAP.h - 1);
       } else {
@@ -596,7 +607,6 @@ document.getElementById("start-btn").addEventListener("click", () => {
       if (p.x === game.player.x && p.y === game.player.y) playerHit = true;
     });
 
-    // Directional drone proximity audio
     nearestP = nearestPatrollerInfo(game.player.x, game.player.y);
     if (nearestP.dist <= 8) {
       const vol = clamp(0.01 + (1 - nearestP.dist / 8) * 0.12, 0.01, 0.14);
