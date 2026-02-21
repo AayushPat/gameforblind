@@ -730,22 +730,14 @@ const game = {
       tutorialStep = 5;
 
       if (typeof playCheckpoint === "function") playCheckpoint();
-      tutorialNarrate(TUTORIAL_LINES[4]);
+      const el = document.getElementById("narration-game");
+      if (el) el.textContent = STORY_NODES[1].text;
 
-      // Set up chapter 2 manually (player is already at STORY_NODES[1] position)
       currentNodeIndex = 1;
       visualPulse = 2.0;
       this.goal.x = STORY_NODES[2].x;
       this.goal.y = STORY_NODES[2].y;
       currentPath = computePath(this.player.x, this.player.y, this.goal.x, this.goal.y);
-
-      // Delay chapter 2 narration so "tutorial complete" speaks first
-      setTimeout(() => {
-        const el = document.getElementById("narration-game");
-        if (el) el.textContent = STORY_NODES[1].text;
-        if (typeof speak === "function") speak(STORY_NODES[1].text);
-      }, 5000);
-
       return;
     }
 
@@ -756,7 +748,6 @@ const game = {
       this.won = true;
 
       // ─── VICTORY EFFECTS ───
-      if (typeof speak === "function") speak("Signal located. The Broadcast Tower is secure.");
       if (this.patrolInterval) clearInterval(this.patrolInterval);
 
       // Triumphant Victory Chords
@@ -770,7 +761,8 @@ const game = {
     }
 
     const node = STORY_NODES[currentNodeIndex];
-    if (typeof speak === "function") speak(node.text);
+    const narEl = document.getElementById("narration-game");
+    if (narEl) narEl.textContent = node.text;
 
     if (currentNodeIndex + 1 < STORY_NODES.length) {
       this.goal.x = STORY_NODES[currentNodeIndex + 1].x;
