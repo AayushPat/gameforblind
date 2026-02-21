@@ -88,7 +88,9 @@ const game = {
 
     const node = STORY_NODES[currentNodeIndex];
     if (typeof speak === 'function') speak(node.text);
-    document.getElementById('status').textContent = node.title;
+
+    // Update UI Progress Tracker
+    document.getElementById('status').textContent = `Chapter ${currentNodeIndex + 1} of ${STORY_NODES.length}: ${node.title}`;
 
     if (currentNodeIndex + 1 < STORY_NODES.length) {
       this.goal.x = STORY_NODES[currentNodeIndex + 1].x;
@@ -128,9 +130,9 @@ function renderGrid() {
   if (!canvas) return;
   const c = canvas.getContext('2d');
 
-  // Fix canvas size to a nice viewport window
-  const viewW = 400;
-  const viewH = 400;
+  // Fix canvas size to a nice viewport window (INCREASED SIZE)
+  const viewW = 800;
+  const viewH = 800;
   canvas.width = viewW;
   canvas.height = viewH;
 
@@ -167,11 +169,21 @@ function renderGrid() {
     });
   });
 
-  // Draw Checkpoints (Dimly lit future ones, bright active one)
+  // (The dotted line code was removed from here)
+
+  // Draw Checkpoints with Numbers
   STORY_NODES.forEach((node, i) => {
-    if (i <= currentNodeIndex) return; // Skip past ones
-    c.fillStyle = i === currentNodeIndex + 1 ? '#ffd700' : 'rgba(255, 215, 0, 0.2)';
+    // Only show current and future nodes (optional, but keeps map clean)
+    if (i < currentNodeIndex) return;
+
+    // Draw the square
+    c.fillStyle = i === currentNodeIndex + 1 ? '#ffd700' : 'rgba(255, 215, 0, 0.3)';
     c.fillRect(node.x * CELL + 8, node.y * CELL + 8, CELL - 16, CELL - 16);
+
+    // Draw the Chapter Number next to it
+    c.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    c.font = '14px sans-serif';
+    c.fillText(`Ch ${i + 1}`, node.x * CELL + CELL, node.y * CELL + CELL / 2 + 5);
   });
 
   // Draw Player Sonar Pulse
@@ -210,7 +222,9 @@ document.getElementById('start-btn').addEventListener('click', () => {
   game.won = false;
 
   if (typeof speak === 'function') speak(STORY_NODES[0].text);
-  document.getElementById('status').textContent = STORY_NODES[0].title;
+
+  // Set initial UI tracker text
+  document.getElementById('status').textContent = `Chapter 1 of ${STORY_NODES.length}: ${STORY_NODES[0].title}`;
 
   // Kick off the drawing loop
   if (!frameId) drawLoop();
