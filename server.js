@@ -16,18 +16,25 @@ const https = require("https");
 const PORT = process.env.PORT || 3000;
 const ROOT = path.join(__dirname);
 
-// Read API key and voice from config.js (same file the frontend uses)
+// Load API key and voice ID from environment variables.
+// Locally, set them in a config.js or export them in your shell.
+// On Render, set them in the Environment tab of your service.
 function loadConfig() {
-  const configPath = path.join(ROOT, "config.js");
-  if (!fs.existsSync(configPath)) {
-    console.error("Missing config.js. Create it with EL_API_KEY and EL_VOICE_ID.");
-    process.exit(1);
-  }
-  const content = fs.readFileSync(configPath, "utf8");
-  const apiKey = content.match(/EL_API_KEY\s*=\s*['"]([^'"]+)['"]/)?.[1];
-  const voiceId = content.match(/EL_VOICE_ID\s*=\s*['"]([^'"]+)['"]/)?.[1];
+  let apiKey  = process.env.EL_API_KEY;
+  let voiceId = process.env.EL_VOICE_ID;
+
+  // Fallback: try reading from local config.js if env vars are missing
   if (!apiKey || !voiceId) {
-    console.error("config.js must define EL_API_KEY and EL_VOICE_ID.");
+    const configPath = path.join(ROOT, "config.js");
+    if (fs.existsSync(configPath)) {
+      const content = fs.readFileSync(configPath, "utf8");
+      apiKey  = apiKey  || content.match(/EL_API_KEY\s*=\s*['"]([^'"]+)['"]/)?.[1];
+      voiceId = voiceId || content.match(/EL_VOICE_ID\s*=\s*['"]([^'"]+)['"]/)?.[1];
+    }
+  }
+
+  if (!apiKey || !voiceId) {
+    console.error("EL_API_KEY and EL_VOICE_ID must be set as environment variables.");
     process.exit(1);
   }
   return { apiKey, voiceId };
