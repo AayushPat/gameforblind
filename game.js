@@ -579,8 +579,6 @@ const game = {
 
     for (const p of PATROLLERS) {
       if (nx === p.x && ny === p.y) tookDamage = true;
-      const d = Math.sqrt(Math.pow(nx - p.x, 2) + Math.pow(ny - p.y, 2));
-      if (d < minDangerDist) { minDangerDist = d; nearestDangerX = p.x; }
     }
 
     // Danger music — reuse the helper results computed below for efficiency
@@ -669,8 +667,6 @@ const game = {
         playTone({ freq: 120, type: "triangle", duration: 0.05, volume: 0.03 + (2 - distToGoalAfter) / 2 * 0.03, pan: goalPan });
       }
     }
-    if (typeof updatePathGuide === 'function') updatePathGuide(pathGuideLevel, pathGuidePan);
-
     // Music path guide: fixed-volume ambience panned toward ideal next move
     currentPath = computePath(this.player.x, this.player.y, this.goal.x, this.goal.y);
     let pathGuidePan = 0;
