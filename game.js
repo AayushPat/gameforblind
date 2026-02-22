@@ -703,8 +703,6 @@ const game = {
         tutorialNarrate(TUTORIAL_LINES[3], () => { tutorialStep = 7; });
       }
     }
-    if (typeof updatePathGuide === 'function') updatePathGuide(pathGuideLevel, pathGuidePan);
-
     if (this.player.x === this.goal.x && this.player.y === this.goal.y) {
       if (typeof updatePathGuide === "function") updatePathGuide(0);
       playTone({ freq: 600, type: "sine", duration: 0.4, volume: 0.1, pan: 0 });
