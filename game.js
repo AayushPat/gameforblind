@@ -580,6 +580,88 @@ function computePath(startX, startY, goalX, goalY) {
   return []; // no path
 }
 
+// ─── PATHFINDING & NAVIGATION HELPERS ────────────────────────────────────────
+let currentPath = [];
+
+// Returns {dist, gapX} for the nearest gap cell in the next hazard wall ahead.
+// Returns null if no walls between player and goal.
+function nearestGapInfo(px, py, goalY) {
+  const wallsAhead = HAZARDS.filter(h => {
+    if (!h.zones.length) return false;
+    const wallY = h.zones[0].y;
+    return wallY < py && wallY > goalY;
+  });
+  if (!wallsAhead.length) return null;
+
+  wallsAhead.sort((a, b) => Math.abs(a.zones[0].y - py) - Math.abs(b.zones[0].y - py));
+  const nearestWall = wallsAhead[0];
+  const wallY       = nearestWall.zones[0].y;
+  const hazardXs    = new Set(nearestWall.zones.map(z => z.x));
+
+  let minDist = Infinity, gapX = px;
+  for (let x = 0; x < MAP.w; x++) {
+    if (!hazardXs.has(x)) {
+      const d = Math.sqrt((px - x) ** 2 + (py - wallY) ** 2);
+      if (d < minDist) { minDist = d; gapX = x; }
+    }
+  }
+  return { dist: minDist, gapX };
+}
+
+// Returns true if any hazard wall row sits between the player and goal Y.
+function hasWallBetween(py, gy) {
+  const minY = Math.min(py, gy);
+  const maxY = Math.max(py, gy);
+  return HAZARDS.some(h => {
+    if (!h.zones.length) return false;
+    const wallY = h.zones[0].y;
+    return wallY > minY && wallY < maxY;
+  });
+}
+
+function _buildBlockedSet() {
+  const blocked = new Set();
+  for (const hazard of HAZARDS)
+    for (const z of hazard.zones)
+      blocked.add(`${z.x},${z.y}`);
+  return blocked;
+}
+
+function computePath(startX, startY, goalX, goalY) {
+  const blocked = _buildBlockedSet();
+  const startKey = `${startX},${startY}`;
+  const goalKey  = `${goalX},${goalY}`;
+
+  const queue   = [startKey];
+  const visited = new Set([startKey]);
+  const parent  = new Map();
+
+  while (queue.length) {
+    const key = queue.shift();
+    if (key === goalKey) {
+      const path = [];
+      let k = key;
+      while (k !== startKey) {
+        const [x, y] = k.split(',').map(Number);
+        path.unshift({ x, y });
+        k = parent.get(k);
+      }
+      return path;
+    }
+    const [cx, cy] = key.split(',').map(Number);
+    for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < 0 || nx >= MAP.w || ny < 0 || ny >= MAP.h) continue;
+      const nk = `${nx},${ny}`;
+      if (visited.has(nk) || blocked.has(nk)) continue;
+      visited.add(nk);
+      parent.set(nk, key);
+      queue.push(nk);
+    }
+  }
+  return []; // no path
+}
+
 // ─── GLOBAL STATE ────────────────────────────────────────────────────────────
 let currentNodeIndex = 0;
 let visualPulse = 0;
@@ -789,6 +871,7 @@ const game = {
         tutorialNarrate(TUTORIAL_LINES[3], () => { tutorialStep = 7; });
       }
     }
+    if (typeof updatePathGuide === 'function') updatePathGuide(pathGuideLevel, pathGuidePan);
 
     if (this.player.x === this.goal.x && this.player.y === this.goal.y) {
       if (typeof updatePathGuide === "function") updatePathGuide(0);
