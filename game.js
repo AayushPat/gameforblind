@@ -257,6 +257,15 @@ const _ttsReady = (async () => {
       return;
     }
     await res.blob();
+    // Server confirmed working — auto-enable voice and update button
+    voiceEnabled = true;
+    const vBtn = document.getElementById("voice-btn");
+    if (vBtn) {
+      vBtn.textContent = "AI Voice: ON";
+      vBtn.setAttribute("aria-pressed", "true");
+      vBtn.style.borderColor = "rgba(0,255,204,0.6)";
+      vBtn.style.color = "#00ffcc";
+    }
     _setTtsStatus("AI narrator: Ready. Click the button above to start.");
   } catch (e) {
     _setTtsStatus("AI narrator unavailable. Run: node server.js in this folder, then open http://localhost:3000/gfb.html");
