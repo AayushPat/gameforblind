@@ -276,6 +276,7 @@ const _ttsReady = (async () => {
 //   canCut — if false, bail out when already speaking (never cuts a live line)
 //   onDone — callback fired when audio finishes (or on error)
 async function speak(text, { lock = false, canCut = true, onDone = null } = {}) {
+  if (!voiceEnabled) { if (lock) _narrationLock = false; if (onDone) onDone(); return; }
   // Tutorial lines must not cut each other — skip if already speaking
   if (!canCut && _ttsSpeaking) return;
 
@@ -418,6 +419,9 @@ function nearestPatrollerInfo(nx, ny) {
 
 // ─── PATHFINDING & NAVIGATION HELPERS ────────────────────────────────────────
 let currentPath = [];
+let voiceEnabled  = false; // toggled by voice button — off by default to save credits
+let graphicsOn    = true;  // toggled by graphics button — hide canvas for blind play
+let devMode       = false; // backtick key — shows full map for developer testing
 
 // Returns {dist, gapX} for the nearest gap cell in the next hazard wall ahead.
 // Returns null if no walls between player and goal.
@@ -861,6 +865,46 @@ function renderGrid() {
 
   c.fillStyle = "#0f081c";
   c.fillRect(0, 0, viewW, viewH);
+
+  // ── DEV MODE: full zoomed-out map ─────────────────────────────────────────
+  if (devMode) {
+    const dc = Math.min(viewW / MAP.w, viewH / MAP.h);
+    c.save();
+    // grid lines
+    c.strokeStyle = "rgba(255,255,255,0.06)";
+    c.lineWidth = 0.5;
+    for (let x = 0; x <= MAP.w; x++) { c.beginPath(); c.moveTo(x*dc,0); c.lineTo(x*dc,MAP.h*dc); c.stroke(); }
+    for (let y = 0; y <= MAP.h; y++) { c.beginPath(); c.moveTo(0,y*dc); c.lineTo(MAP.w*dc,y*dc); c.stroke(); }
+    // hazards
+    HAZARDS.forEach(h => h.zones.forEach(z => {
+      c.fillStyle = "rgba(255,0,0,0.6)";
+      c.fillRect(z.x*dc+1, z.y*dc+1, dc-2, dc-2);
+    }));
+    // checkpoints
+    STORY_NODES.forEach((n,i) => {
+      c.fillStyle = i === currentNodeIndex ? "#00ffcc" : i === currentNodeIndex+1 ? "#ffd700" : "rgba(255,215,0,0.25)";
+      c.fillRect(n.x*dc+2, n.y*dc+2, dc-4, dc-4);
+      c.fillStyle = "#fff"; c.font = `bold ${Math.max(6,dc*0.45)}px monospace`; c.textAlign="center";
+      c.fillText(i+1, n.x*dc+dc/2, n.y*dc+dc/2+3);
+    });
+    // patrollers
+    PATROLLERS.forEach(p => {
+      c.fillStyle = "#ff0044";
+      c.beginPath(); c.arc(p.x*dc+dc/2, p.y*dc+dc/2, dc/2.5, 0, Math.PI*2); c.fill();
+    });
+    // goal
+    c.fillStyle = "rgba(0,255,204,0.5)";
+    c.fillRect(game.goal.x*dc+1, game.goal.y*dc+1, dc-2, dc-2);
+    // player
+    c.fillStyle = "#00ffcc";
+    c.beginPath(); c.arc(game.player.x*dc+dc/2, game.player.y*dc+dc/2, dc/2, 0, Math.PI*2); c.fill();
+    // dev label
+    c.fillStyle = "#ffd700"; c.font = "bold 13px monospace"; c.textAlign = "left";
+    c.fillText("[ DEV MODE — ` to toggle ]", 6, viewH - 8);
+    c.restore();
+    // still draw HUD below
+  } else {
+
   c.save();
 
   let shakeX = (Math.random() - 0.5) * screenShake;
@@ -974,6 +1018,7 @@ function renderGrid() {
   c.restore();
 
   c.restore();
+  } // end normal (non-dev) rendering
 
   // ─── UI HUD OVERLAY ───
   if (game.won) {
@@ -1189,6 +1234,11 @@ document.addEventListener("keydown", (e) => {
     skipTutorial();
     return;
   }
+  if (e.key === "`") {
+    e.preventDefault();
+    devMode = !devMode;
+    return;
+  }
   if (e.key === "j" || e.key === "J" || e.key === " ") {
     e.preventDefault();
     game.interact();
@@ -1199,4 +1249,24 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     game.move(move.dx, move.dy);
   }
+});
+
+// ─── SETTINGS BUTTONS ────────────────────────────────────────────────────────
+document.getElementById("voice-btn").addEventListener("click", () => {
+  voiceEnabled = !voiceEnabled;
+  const btn = document.getElementById("voice-btn");
+  btn.textContent = `AI Voice: ${voiceEnabled ? "ON" : "OFF"}`;
+  btn.setAttribute("aria-pressed", voiceEnabled);
+  btn.style.borderColor = voiceEnabled ? "rgba(0,255,204,0.6)" : "rgba(255,215,0,0.35)";
+  btn.style.color = voiceEnabled ? "#00ffcc" : "";
+});
+
+document.getElementById("graphics-btn").addEventListener("click", () => {
+  graphicsOn = !graphicsOn;
+  const canvas = document.getElementById("grid-canvas");
+  if (canvas) canvas.style.display = graphicsOn ? "block" : "none";
+  const btn = document.getElementById("graphics-btn");
+  btn.textContent = `Graphics: ${graphicsOn ? "ON" : "OFF"}`;
+  btn.setAttribute("aria-pressed", graphicsOn);
+  btn.style.borderColor = graphicsOn ? "rgba(255,215,0,0.35)" : "rgba(0,255,204,0.6)";
 });
